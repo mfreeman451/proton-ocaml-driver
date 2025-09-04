@@ -163,6 +163,25 @@ let test_client_creation () =
   (* Just check it doesn't crash - actual connection would fail without server *)
   Alcotest.(check bool) "Client creation succeeds" true true
 
+let test_compression_enabled_connection () =
+  (* Test that we can create connections with different compression settings *)
+  let conn_none = Connection.create ~compression:Compress.None () in
+  let conn_lz4 = Connection.create ~compression:Compress.LZ4 () in
+  let conn_zstd = Connection.create ~compression:Compress.ZSTD () in
+  
+  Alcotest.(check bool) "None compression connection" true (conn_none.compression = Compress.None);
+  Alcotest.(check bool) "LZ4 compression connection" true (conn_lz4.compression = Compress.LZ4);  
+  Alcotest.(check bool) "ZSTD compression connection" true (conn_zstd.compression = Compress.ZSTD)
+
+let test_compression_enabled_client () =
+  (* Test that clients can be created with compression *)
+  let client_none = Client.create ~compression:Compress.None () in
+  let client_lz4 = Client.create ~compression:Compress.LZ4 () in
+  
+  (* Verify compression is passed through (indirect test) *)
+  Alcotest.(check bool) "Client with None compression" true (client_none.conn.compression = Compress.None);
+  Alcotest.(check bool) "Client with LZ4 compression" true (client_lz4.conn.compression = Compress.LZ4)
+
 (* Define test suites *)
 let cityhash_tests = [
   Alcotest.test_case "Consistency" `Quick test_cityhash_consistency;
@@ -186,6 +205,8 @@ let binary_tests = [
 let connection_tests = [
   Alcotest.test_case "Connection creation" `Quick test_connection_creation;
   Alcotest.test_case "Client creation" `Quick test_client_creation;
+  Alcotest.test_case "Compression-enabled connection" `Quick test_compression_enabled_connection;
+  Alcotest.test_case "Compression-enabled client" `Quick test_compression_enabled_client;
 ]
 
 (* Main test runner *)

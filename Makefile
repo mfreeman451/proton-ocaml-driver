@@ -36,6 +36,10 @@ doc:
 example:
 	@dune exec examples/query
 
+# Run the compression example
+compression-example:
+	@dune exec examples/compression_example
+
 # Format code
 format:
 	dune build @fmt --auto-promote

@@ -8,8 +8,8 @@ type query_result =
 
 type t = { conn : Connection.t }
 
-let create ?host ?port ?database ?user ?password ?(settings=[]) () =
-  let conn = Connection.create ?host ?port ?database ?user ?password ~settings () in
+let create ?host ?port ?database ?user ?password ?compression ?(settings=[]) () =
+  let conn = Connection.create ?host ?port ?database ?user ?password ?compression ~settings () in
   { conn }
 
 let disconnect c = Connection.disconnect c.conn

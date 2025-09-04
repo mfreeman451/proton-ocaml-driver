@@ -1,3 +1,7 @@
 (executable
  (name query)
  (libraries proton))
+
+(executable
+ (name compression_example)
+ (libraries proton))

@@ -28,13 +28,16 @@ type t = {
   mutable connected : bool;
   mutable srv : server_info option;
   ctx : Context.t;
-  compression : Protocol.compression;  (* phase 1: Disabled *)
+  compression : Protocol.compression;
+  mutable compress_reader : Compress.reader option;
+  mutable compress_writer : Compress.writer option;
 }
 
 let create ?(host="127.0.0.1") ?(port=Defines.default_port)
            ?(database=Defines.default_database)
            ?(user=Defines.default_user)
            ?(password=Defines.default_password)
+           ?(compression=Compress.None)
            ?(settings=[]) () =
   let ctx = Context.make () in
   ctx.settings <- settings;
@@ -42,7 +45,9 @@ let create ?(host="127.0.0.1") ?(port=Defines.default_port)
     host; port; database; user; password;
     ic=None; oc=None; connected=false; srv=None;
     ctx;
-    compression = Compress.None;
+    compression;
+    compress_reader=None;
+    compress_writer=None;
   }
 
 let with_io t f =
@@ -61,12 +66,23 @@ let connect t =
     Unix.connect fd sockaddr;
     let ic = Unix.in_channel_of_descr fd in
     let oc = Unix.out_channel_of_descr fd in
-    t.ic <- Some ic; t.oc <- Some oc; t.connected <- true
+    t.ic <- Some ic; 
+    t.oc <- Some oc;
+    (* Initialize compression readers/writers if needed *)
+    if t.compression <> Compress.None then begin
+      t.compress_reader <- Some (Compress.create_reader ic t.compression);
+      t.compress_writer <- Some (Compress.create_writer oc t.compression)
+    end;
+    t.connected <- true
 
 let disconnect t =
   (match t.ic with Some ic -> close_in_noerr ic | None -> ());
   (match t.oc with Some oc -> close_out_noerr oc | None -> ());
-  t.ic <- None; t.oc <- None; t.connected <- false
+  t.ic <- None; 
+  t.oc <- None;
+  t.compress_reader <- None;
+  t.compress_writer <- None;
+  t.connected <- false
 
 let send_hello t =
   with_io t (fun _ic oc ->
@@ -201,8 +217,21 @@ let read_profile_info _t ic =
 
 let receive_data t ~raw ic : Block.t =
   let revision = match t.srv with Some s -> s.revision | None -> 0 in
-  (* In phase 1 raw=false or true is same (no compression). *)
-  Block.read_block ~revision ic
+  (* Apply decompression if enabled and not raw mode *)
+  if raw || t.compression = Compress.None then
+    Block.read_block ~revision ic
+  else
+    (* For compressed data, decompress in-memory and create channel from bytes *)
+    let decompressed_data = Compress.read_compressed_block ic t.compression in
+    (* Use pipe for now - cleaner than temp files and works with existing Block API *)
+    let (read_fd, write_fd) = Unix.pipe () in
+    let write_ic = Unix.out_channel_of_descr write_fd in  
+    let read_ic = Unix.in_channel_of_descr read_fd in
+    output write_ic decompressed_data 0 (Bytes.length decompressed_data);
+    close_out write_ic;
+    let result = Block.read_block ~revision read_ic in
+    close_in read_ic;
+    result
 
 let receive_packet t : packet =
   with_io t (fun ic _oc ->
