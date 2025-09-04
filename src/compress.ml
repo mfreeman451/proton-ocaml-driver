@@ -2,6 +2,9 @@
 
 open Binary
 
+exception Compression_error of string
+exception Checksum_mismatch of string
+
 type method_t = 
   | None 
   | LZ4 
@@ -24,13 +27,8 @@ let compress_header_size = 1 + 4 + 4  (* method + compressed_size + uncompressed
 let header_size = checksum_size + compress_header_size
 let max_block_size = 1 lsl 20  (* 1MB *)
 
-type compressed_block = {
-  checksum: bytes;           (* 16 bytes CityHash128 *)
-  method_byte: int;          (* 0x82 for LZ4, 0x90 for ZSTD *)
-  compressed_size: int32;    (* Size of compressed data + 9 (header without checksum) *)
-  uncompressed_size: int32;  (* Original size *)
-  data: bytes;               (* Compressed data *)
-}
+(* Note: We don't need the compressed_block record type since we handle
+   compression frame format directly in read/write functions *)
 
 (* Compress data using LZ4 *)
 let compress_lz4 (data : bytes) : bytes =
@@ -99,10 +97,27 @@ let read_compressed_block ic (method_ : method_t) : bytes =
       let compressed_data_size = Int32.to_int compressed_size - compress_header_size in
       let compressed_data = really_input_string ic compressed_data_size |> Bytes.of_string in
       
-      (* TODO: Verify checksum when we have proper CityHash128 *)
+      (* Verify checksum *)
+      let checksum_input = Bytes.create (compress_header_size + compressed_data_size) in
+      Bytes.blit header checksum_size checksum_input 0 compress_header_size;
+      Bytes.blit compressed_data 0 checksum_input compress_header_size compressed_data_size;
       
-      (* Decompress *)
-      decompress_lz4 compressed_data (Int32.to_int uncompressed_size)
+      let calculated_hash = Cityhash.cityhash128 checksum_input in
+      let calculated_checksum = Cityhash.to_bytes calculated_hash in
+      
+      let received_checksum = Bytes.sub header 0 checksum_size in
+      let hex_of_bytes bytes =
+        Bytes.to_string bytes 
+        |> String.fold_left (fun acc c -> acc ^ Printf.sprintf "%02x" (Char.code c)) ""
+      in
+      if not (Bytes.equal calculated_checksum received_checksum) then
+        raise (Checksum_mismatch 
+          (Printf.sprintf "LZ4 checksum verification failed: expected %s, got %s"
+            (hex_of_bytes received_checksum)
+            (hex_of_bytes calculated_checksum)))
+      else
+        (* Decompress *)
+        decompress_lz4 compressed_data (Int32.to_int uncompressed_size)
   | ZSTD ->
       failwith "ZSTD decompression not implemented yet"
 
@@ -110,7 +125,7 @@ let read_compressed_block ic (method_ : method_t) : bytes =
 type reader = {
   ic: in_channel;
   method_: method_t;
-  mutable buffer: bytes;
+  mutable buffer: bytes; [@warning "-69"]  (* This field is mutated in read_block *)
   mutable pos: int;
   mutable valid: int;
 }
@@ -153,7 +168,7 @@ let read reader buf off len =
 type writer = {
   oc: out_channel;
   method_: method_t;
-  mutable buffer: bytes;
+  mutable buffer: bytes; [@warning "-69"]  (* Contents mutated via Bytes.blit *)
   mutable pos: int;
 }
 

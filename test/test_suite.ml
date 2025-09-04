@@ -70,6 +70,58 @@ let test_compression_frame_format () =
   Alcotest.(check int32) "Uncompressed size in header" 
     (Int32.of_int (Bytes.length test_data)) uncompressed_size
 
+let test_checksum_verification () =
+  let test_data = Bytes.of_string "Test data for checksum verification" in
+  let temp_file = Filename.temp_file "proton_test" ".tmp" in
+  
+  (* Write a valid compressed block *)
+  let () =
+    let oc = open_out_bin temp_file in
+    Compress.write_compressed_block oc test_data Compress.LZ4;
+    close_out oc
+  in
+  
+  (* First, verify that reading works normally *)
+  let () =
+    let ic = open_in_bin temp_file in
+    let decompressed = Compress.read_compressed_block ic Compress.LZ4 in
+    close_in ic;
+    Alcotest.(check string) "Valid checksum verification" 
+      (Bytes.to_string test_data) (Bytes.to_string decompressed)
+  in
+  
+  (* Now corrupt the checksum and verify it fails *)
+  let () =
+    let ic = open_in_bin temp_file in
+    let file_size = in_channel_length ic in
+    let frame = really_input_string ic file_size |> Bytes.of_string in
+    close_in ic;
+    
+    (* Corrupt the first byte of checksum *)
+    let original_byte = Bytes.get frame 0 in
+    let corrupted_byte = Char.chr ((Char.code original_byte) lxor 0xFF) in
+    Bytes.set frame 0 corrupted_byte;
+    
+    (* Write the corrupted frame back *)
+    let oc = open_out_bin temp_file in
+    output oc frame 0 (Bytes.length frame);
+    close_out oc;
+    
+    (* Try to read it - should fail with checksum error *)
+    let ic = open_in_bin temp_file in
+    let result = try
+      let _ = Compress.read_compressed_block ic Compress.LZ4 in
+      false (* Should not reach here *)
+    with
+    | Compress.Checksum_mismatch _ -> true
+    | _ -> false
+    in
+    close_in ic;
+    Alcotest.(check bool) "Corrupted checksum detected" true result
+  in
+  
+  Sys.remove temp_file
+
 (* Protocol tests *)
 let test_compression_method_encoding () =
   Alcotest.(check int) "None method byte" 0x02 (Compress.method_to_byte Compress.None);
@@ -121,6 +173,7 @@ let compression_tests = [
   Alcotest.test_case "LZ4 roundtrip" `Quick test_lz4_roundtrip;
   Alcotest.test_case "LZ4 compression ratio" `Quick test_lz4_compression_ratio;
   Alcotest.test_case "Frame format" `Quick test_compression_frame_format;
+  Alcotest.test_case "Checksum verification" `Quick test_checksum_verification;
   Alcotest.test_case "Method encoding" `Quick test_compression_method_encoding;
   Alcotest.test_case "Method decoding" `Quick test_compression_method_decoding;
 ]
