@@ -221,17 +221,10 @@ let receive_data t ~raw ic : Block.t =
   if raw || t.compression = Compress.None then
     Block.read_block ~revision ic
   else
-    (* For compressed data, decompress in-memory and create channel from bytes *)
+    (* For compressed data, decompress in-memory and parse from bytes directly *)
     let decompressed_data = Compress.read_compressed_block ic t.compression in
-    (* Use pipe for now - cleaner than temp files and works with existing Block API *)
-    let (read_fd, write_fd) = Unix.pipe () in
-    let write_ic = Unix.out_channel_of_descr write_fd in  
-    let read_ic = Unix.in_channel_of_descr read_fd in
-    output write_ic decompressed_data 0 (Bytes.length decompressed_data);
-    close_out write_ic;
-    let result = Block.read_block ~revision read_ic in
-    close_in read_ic;
-    result
+    let br = Buffered_reader.create_from_bytes decompressed_data in
+    Block.read_block_br ~revision br
 
 let receive_packet t : packet =
   with_io t (fun ic _oc ->

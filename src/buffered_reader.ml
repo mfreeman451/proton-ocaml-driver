@@ -22,19 +22,28 @@ let create_from_channel ic =
     fill_func;
   }
 
-(* Create a buffered reader from compression reader *)
-let create_from_compress_reader reader =
+(* Create a buffered reader from a bytes source *)
+let create_from_bytes (src:bytes) =
+  let src_len = Bytes.length src in
+  let cursor = ref 0 in
   let fill_func buf offset len =
-    try Compress.read reader buf offset len
-    with End_of_file -> 0
+    if !cursor >= src_len then 0
+    else
+      let remaining = src_len - !cursor in
+      let to_copy = if len < remaining then len else remaining in
+      Bytes.blit src !cursor buf offset to_copy;
+      cursor := !cursor + to_copy;
+      to_copy
   in
   {
     buffer = Bytes.create 8192;
     pos = 0;
-    valid = 0; 
+    valid = 0;
     eof = false;
     fill_func;
   }
+
+(* Removed compression reader variant to avoid module cycles; create from bytes instead *)
 
 (* Fill buffer with more data *)
 let fill_buffer br =

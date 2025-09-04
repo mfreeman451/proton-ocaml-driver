@@ -23,3 +23,18 @@ let read ic : t =
   in
   loop ();
   bi
+
+let read_br br : t =
+  let bi = { is_overflows=false; bucket_num = -1 } in
+  let rec loop () =
+    let field = Binary.read_varint_int_br br in
+    match field with
+    | 0 -> ()
+    | 1 -> bi.is_overflows <- (Binary.read_uint8_br br) <> 0; loop ()
+    | 2 ->
+        let n = Int32.to_int (Binary.read_int32_le_br br) in
+        bi.bucket_num <- n; loop ()
+    | _ -> loop ()
+  in
+  loop ();
+  bi

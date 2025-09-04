@@ -70,6 +70,52 @@ let write_str oc s =
   write_varint_int oc len;
   output_string oc s
 
+(* Bytes-reader variants *)
+let really_input_bytes_br br n =
+  let buf = Bytes.create n in
+  Buffered_reader.really_input br buf 0 n;
+  buf
+
+let read_uint8_br br = Buffered_reader.input_byte br
+
+let read_int32_le_br br =
+  let a = Buffered_reader.input_byte br in
+  let b = Buffered_reader.input_byte br in
+  let c = Buffered_reader.input_byte br in
+  let d = Buffered_reader.input_byte br in
+  Int32.logor
+    (Int32.of_int a)
+    (Int32.logor
+       (Int32.shift_left (Int32.of_int b) 8)
+       (Int32.logor
+          (Int32.shift_left (Int32.of_int c) 16)
+          (Int32.shift_left (Int32.of_int d) 24)))
+
+let read_uint64_le_br br =
+  let low = read_int32_le_br br in
+  let high = read_int32_le_br br in
+  Int64.logor 
+    (Int64.logand (Int64.of_int32 low) 0xFFFFFFFFL)
+    (Int64.shift_left (Int64.of_int32 high) 32)
+
+let read_float64_le_br br =
+  let bits = read_uint64_le_br br in
+  Int64.float_of_bits bits
+
+let read_varint_int_br br : int =
+  let rec loop shift acc =
+    let b = Buffered_reader.input_byte br in
+    let v = acc lor ((b land 0x7f) lsl shift) in
+    if (b land 0x80) <> 0 then loop (shift + 7) v else v
+  in loop 0 0
+
+let read_str_br br =
+  let len = read_varint_int_br br in
+  if len = 0 then ""
+  else
+    let buf = really_input_bytes_br br len in
+    Bytes.to_string buf
+
 (* Bytes helpers for compression module *)
 let bytes_get_int32_le buf offset =
   let a = Char.code (Bytes.get buf offset) in

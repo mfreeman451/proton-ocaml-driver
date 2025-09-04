@@ -42,6 +42,33 @@ let read_block ~revision ic : t =
   in
   { info; columns = cols; n_rows }
 
+let read_block_br ~revision br : t =
+  let info =
+    if revision >= Defines.dbms_min_revision_with_block_info
+    then Block_info.read_br br
+    else { Block_info.is_overflows=false; bucket_num = -1 }
+  in
+  let n_columns = Binary.read_varint_int_br br in
+  let n_rows    = Binary.read_varint_int_br br in
+  let cols =
+    let rec loop i acc =
+      if i = n_columns then List.rev acc
+      else
+        let name = Binary.read_str_br br in
+        let type_spec = Binary.read_str_br br in
+        let data =
+          if n_rows = 0 then [||]
+          else
+            let reader = Columns.reader_of_spec_br type_spec in
+            reader br n_rows
+        in
+        let c = { name; type_spec; data } in
+        loop (i+1) (c::acc)
+    in
+    loop 0 []
+  in
+  { info; columns = cols; n_rows }
+
 let get_rows (b:t) : value list list =
   if b.n_rows = 0 then []
   else
