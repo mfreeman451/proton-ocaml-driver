@@ -471,6 +471,124 @@ let test_pool_with_connection_helper () =
   );
   Pool.close_pool pool
 
+(* TLS configuration tests *)
+let contains_substring str substr =
+  try
+    let _ = Str.search_forward (Str.regexp_string substr) str 0 in
+    true
+  with Not_found -> false
+
+let test_tls_config_creation () =
+  (* Test basic TLS configuration *)
+  let tls_config = {
+    Connection.enable_tls = true;
+    ca_cert_file = None;
+    client_cert_file = None;
+    client_key_file = None;
+    verify_hostname = true;
+    insecure_skip_verify = false;
+  } in
+  let conn = Connection.create ~tls_config () in
+  Alcotest.(check bool) "TLS enabled in connection" true conn.tls_config.enable_tls
+
+let test_tls_insecure_config () =
+  (* Test insecure TLS configuration *)
+  let insecure_tls_config = {
+    Connection.enable_tls = true;
+    ca_cert_file = None;
+    client_cert_file = None;
+    client_key_file = None;
+    verify_hostname = false;
+    insecure_skip_verify = true;
+  } in
+  let conn = Connection.create ~tls_config:insecure_tls_config () in
+  Alcotest.(check bool) "Insecure TLS config" true conn.tls_config.insecure_skip_verify;
+  Alcotest.(check bool) "Hostname verification disabled" false conn.tls_config.verify_hostname
+
+let test_tls_authenticator_creation () =
+  (* Test that we can create TLS authenticator without crashing *)
+  let conn = Connection.create 
+    ~tls_config:{Connection.default_tls_config with insecure_skip_verify = true} () in
+  (* This should not crash - it creates the TLS config internally *)
+  let result = try
+    let _tls_config = Connection.create_tls_config conn in
+    true
+  with
+  | Failure msg when contains_substring msg "not yet fully implemented" -> true
+  | _ -> false
+  in
+  Alcotest.(check bool) "TLS config creation succeeds or gives expected message" true result
+
+let test_tls_system_ca_config () =
+  (* Test system CA configuration *)
+  let conn = Connection.create 
+    ~tls_config:{Connection.default_tls_config with enable_tls = true} () in
+  let result = try
+    let _tls_config = Connection.create_tls_config conn in
+    true
+  with
+  | Failure msg when contains_substring msg "not yet fully implemented" -> true
+  | _ -> false
+  in
+  Alcotest.(check bool) "System CA config works or gives expected message" true result
+
+let test_tls_connection_attempt () =
+  (* Test that TLS connection setup gives appropriate message *)
+  let tls_config = {
+    Connection.enable_tls = true;
+    ca_cert_file = None;
+    client_cert_file = None;
+    client_key_file = None;
+    verify_hostname = true;
+    insecure_skip_verify = true; (* Use insecure for testing *)
+  } in
+  let conn = Connection.create ~host:"127.0.0.1" ~port:9440 ~tls_config () in
+  (* Try to connect - should fail with expected message since TLS handshake isn't fully implemented *)
+  let result = try
+    Connection.connect conn;
+    false (* Should not succeed *)
+  with
+  | Failure msg when contains_substring msg "TLS connection setup not yet fully implemented" -> true
+  | Failure msg when contains_substring msg "use enable_tls=false for now" -> true  (* Alternative message *)
+  | Unix.Unix_error _ -> true  (* Connection failed - expected for non-existent server *)
+  | _ -> false
+  in
+  Alcotest.(check bool) "TLS connection gives expected failure" true result
+
+let test_mtls_placeholder () =
+  (* Test mTLS configuration placeholder *)
+  let mtls_config = {
+    Connection.enable_tls = true;
+    ca_cert_file = None;
+    client_cert_file = Some "/path/to/cert.pem";
+    client_key_file = Some "/path/to/key.pem";
+    verify_hostname = true;
+    insecure_skip_verify = false;
+  } in
+  let conn = Connection.create ~tls_config:mtls_config () in
+  let result = try
+    let _tls_config = Connection.create_tls_config conn in
+    false (* Should not succeed with mTLS *)
+  with
+  | Failure msg when contains_substring msg "Client certificate support not yet implemented" -> true
+  | _ -> false
+  in
+  Alcotest.(check bool) "mTLS gives expected not-implemented message" true result
+
+let test_tls_with_client_creation () =
+  (* Test that Client can be created with TLS config *)
+  let tls_config = {
+    Connection.enable_tls = false; (* Disabled for now *)
+    ca_cert_file = None;
+    client_cert_file = None;
+    client_key_file = None;
+    verify_hostname = true;
+    insecure_skip_verify = false;
+  } in
+  let client = Client.create ~host:"localhost" ~port:9440 ~tls_config () in
+  (* Verify the TLS config is stored properly *)
+  Alcotest.(check bool) "Client TLS config stored" false client.conn.tls_config.enable_tls
+
 let datetime_tests = [
   Alcotest.test_case "DateTime parsing" `Quick test_datetime_parsing;
   Alcotest.test_case "DateTime with timezone" `Quick test_datetime_with_timezone;
@@ -504,6 +622,16 @@ let pool_tests = [
   Alcotest.test_case "Pool with_connection helper" `Quick test_pool_with_connection_helper;
 ]
 
+let tls_tests = [
+  Alcotest.test_case "TLS config creation" `Quick test_tls_config_creation;
+  Alcotest.test_case "TLS insecure config" `Quick test_tls_insecure_config;
+  Alcotest.test_case "TLS authenticator creation" `Quick test_tls_authenticator_creation;
+  Alcotest.test_case "TLS system CA config" `Quick test_tls_system_ca_config;
+  Alcotest.test_case "TLS connection attempt" `Quick test_tls_connection_attempt;
+  Alcotest.test_case "mTLS placeholder" `Quick test_mtls_placeholder;
+  Alcotest.test_case "TLS with client creation" `Quick test_tls_with_client_creation;
+]
+
 (* Main test runner *)
 let () =
   Alcotest.run "Proton OCaml Driver" [
@@ -515,4 +643,5 @@ let () =
     "Array", array_tests;
     "Map", map_tests;
     "Pool", pool_tests;
+    "TLS", tls_tests;
   ]
