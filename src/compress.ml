@@ -121,6 +121,34 @@ let read_compressed_block ic (method_ : method_t) : bytes =
   | ZSTD ->
       failwith "ZSTD decompression not implemented yet"
 
+let read_compressed_block_br br (method_ : method_t) : bytes =
+  match method_ with
+  | None -> failwith "Uncompressed block reading requires size from caller"
+  | LZ4 ->
+      let header = Bytes.create header_size in
+      Buffered_reader.really_input br header 0 header_size;
+      let method_byte = Char.code (Bytes.get header checksum_size) in
+      if method_byte <> method_to_byte LZ4 then
+        failwith (Printf.sprintf "Expected LZ4 method, got 0x%02x" method_byte);
+
+      let compressed_size = bytes_get_int32_le header (checksum_size + 1) in
+      let uncompressed_size = bytes_get_int32_le header (checksum_size + 5) in
+      let compressed_data_size = (Int32.to_int compressed_size) - compress_header_size in
+      let compressed_data = Bytes.create compressed_data_size in
+      Buffered_reader.really_input br compressed_data 0 compressed_data_size;
+
+      let checksum_input = Bytes.create (compress_header_size + compressed_data_size) in
+      Bytes.blit header checksum_size checksum_input 0 compress_header_size;
+      Bytes.blit compressed_data 0 checksum_input compress_header_size compressed_data_size;
+      let calculated_hash = Cityhash.cityhash128 checksum_input in
+      let calculated_checksum = Cityhash.to_bytes calculated_hash in
+      let received_checksum = Bytes.sub header 0 checksum_size in
+      if not (Bytes.equal calculated_checksum received_checksum) then
+        raise (Checksum_mismatch "LZ4 checksum verification failed (br)")
+      else
+        decompress_lz4 compressed_data (Int32.to_int uncompressed_size)
+  | ZSTD -> failwith "ZSTD decompression not implemented yet"
+
 (* Reader type for streaming decompression *)
 type reader = {
   ic: in_channel;

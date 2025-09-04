@@ -1,7 +1,7 @@
 (library
  (name proton)
  (public_name proton)
- (libraries unix lz4 tls ca-certs x509 ptime ptime.clock.os)
+(libraries unix lz4 ssl)
 (modules defines protocol varint binary errors read_helpers context buffered_reader block_info columns block connection client cityhash compress pool proton)
  (foreign_stubs
   (language cxx)

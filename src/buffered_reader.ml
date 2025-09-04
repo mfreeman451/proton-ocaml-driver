@@ -43,7 +43,21 @@ let create_from_bytes (src:bytes) =
     fill_func;
   }
 
-(* Removed compression reader variant to avoid module cycles; create from bytes instead *)
+(* Create a buffered reader from an SSL socket *)
+let create_from_ssl (sock:Ssl.socket) =
+  let fill_func buf offset len =
+    try Ssl.Runtime_lock.read sock buf offset len
+    with
+    | Ssl.Read_error Ssl.Error_zero_return -> 0
+    | End_of_file -> 0
+  in
+  {
+    buffer = Bytes.create 8192;
+    pos = 0;
+    valid = 0;
+    eof = false;
+    fill_func;
+  }
 
 (* Fill buffer with more data *)
 let fill_buffer br =
