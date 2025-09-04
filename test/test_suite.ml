@@ -249,6 +249,115 @@ let test_datetime64_value_formatting () =
   let dt64_str = Columns.value_to_string dt64_value in
   Alcotest.(check bool) "DateTime64 value formatting" true (String.length dt64_str > 0)
 
+(* Test DateTime binary roundtrip *)
+let test_datetime_binary_roundtrip () =
+  (* Create test data: Unix timestamp for 2021-01-01 00:00:00 UTC *)
+  let test_timestamp = 1609459200L in
+  let test_data = Int64.to_int32 test_timestamp in
+  
+  (* Create binary data manually *)
+  let bytes_data = Bytes.create 4 in
+  let a = Int32.to_int (Int32.logand test_data 0xFFl) in
+  let b = Int32.to_int (Int32.logand (Int32.shift_right_logical test_data 8) 0xFFl) in
+  let c = Int32.to_int (Int32.logand (Int32.shift_right_logical test_data 16) 0xFFl) in
+  let d = Int32.to_int (Int32.logand (Int32.shift_right_logical test_data 24) 0xFFl) in
+  Bytes.set_uint8 bytes_data 0 a;
+  Bytes.set_uint8 bytes_data 1 b;
+  Bytes.set_uint8 bytes_data 2 c;
+  Bytes.set_uint8 bytes_data 3 d;
+  
+  (* Create buffered reader from written data *)
+  let br = Buffered_reader.create_from_bytes bytes_data in
+  
+  (* Read using DateTime reader - test without timezone first *)
+  let reader = Columns.reader_of_spec_br "datetime" in
+  let values = reader br 1 in
+  
+  (* Verify we got the expected value *)
+  match values.(0) with
+  | Columns.VDateTime (ts, tz) ->
+      Alcotest.(check bool) "DateTime timestamp matches" true (ts = test_timestamp);
+      Alcotest.(check bool) "DateTime timezone matches" true (tz = None)
+  | _ -> Alcotest.fail "Expected VDateTime value"
+
+(* Test DateTime64 binary roundtrip *)  
+let test_datetime64_binary_roundtrip () =
+  (* Create test data: millisecond timestamp *)
+  let test_value = 1609459200123L in (* 2021-01-01 00:00:00.123 *)
+  
+  (* Create 8-byte binary data manually *)
+  let bytes_data = Bytes.create 8 in
+  let low = Int64.to_int (Int64.logand test_value 0xFFFFFFFFL) in
+  let high = Int64.to_int (Int64.shift_right_logical test_value 32) in
+  
+  (* Low 4 bytes *)
+  let a = low land 0xFF in
+  let b = (low lsr 8) land 0xFF in
+  let c = (low lsr 16) land 0xFF in
+  let d = (low lsr 24) land 0xFF in
+  
+  (* High 4 bytes *)
+  let e = high land 0xFF in
+  let f = (high lsr 8) land 0xFF in
+  let g = (high lsr 16) land 0xFF in
+  let h = (high lsr 24) land 0xFF in
+  
+  Bytes.set_uint8 bytes_data 0 a;
+  Bytes.set_uint8 bytes_data 1 b;
+  Bytes.set_uint8 bytes_data 2 c;
+  Bytes.set_uint8 bytes_data 3 d;
+  Bytes.set_uint8 bytes_data 4 e;
+  Bytes.set_uint8 bytes_data 5 f;
+  Bytes.set_uint8 bytes_data 6 g;
+  Bytes.set_uint8 bytes_data 7 h;
+  
+  (* Create buffered reader from written data *)
+  let br = Buffered_reader.create_from_bytes bytes_data in
+  
+  (* Read using DateTime64 reader - test without timezone first *)
+  let reader = Columns.reader_of_spec_br "datetime64(3)" in
+  let values = reader br 1 in
+  
+  (* Verify we got the expected value *)
+  match values.(0) with
+  | Columns.VDateTime64 (value, precision, tz) ->
+      Alcotest.(check bool) "DateTime64 value matches" true (value = test_value);
+      Alcotest.(check bool) "DateTime64 precision matches" true (precision = 3);
+      Alcotest.(check bool) "DateTime64 timezone matches" true (tz = None)
+  | _ -> Alcotest.fail "Expected VDateTime64 value"
+
+(* Test reading multiple DateTime values *)
+let test_multiple_datetime_values () =
+  (* Create test data for 3 DateTime values *)
+  let timestamps = [1609459200L; 1640995200L; 1672531200L] in (* 2021, 2022, 2023 *)
+  let bytes_data = Bytes.create 12 in (* 3 * 4 bytes *)
+  
+  List.iteri (fun i ts ->
+    let test_data = Int64.to_int32 ts in
+    let offset = i * 4 in
+    let a = Int32.to_int (Int32.logand test_data 0xFFl) in
+    let b = Int32.to_int (Int32.logand (Int32.shift_right_logical test_data 8) 0xFFl) in
+    let c = Int32.to_int (Int32.logand (Int32.shift_right_logical test_data 16) 0xFFl) in
+    let d = Int32.to_int (Int32.logand (Int32.shift_right_logical test_data 24) 0xFFl) in
+    Bytes.set_uint8 bytes_data (offset + 0) a;
+    Bytes.set_uint8 bytes_data (offset + 1) b;
+    Bytes.set_uint8 bytes_data (offset + 2) c;
+    Bytes.set_uint8 bytes_data (offset + 3) d;
+  ) timestamps;
+  
+  let br = Buffered_reader.create_from_bytes bytes_data in
+  let reader = Columns.reader_of_spec_br "datetime" in
+  let values = reader br 3 in
+  
+  (* Verify all values *)
+  for i = 0 to 2 do
+    match values.(i) with
+    | Columns.VDateTime (ts, tz) ->
+        Alcotest.(check bool) ("DateTime value " ^ string_of_int i) true (ts = List.nth timestamps i);
+        Alcotest.(check bool) ("DateTime timezone " ^ string_of_int i) true (tz = None)
+    | _ -> Alcotest.fail "Expected VDateTime value"
+  done
+
 let datetime_tests = [
   Alcotest.test_case "DateTime parsing" `Quick test_datetime_parsing;
   Alcotest.test_case "DateTime with timezone" `Quick test_datetime_with_timezone;
@@ -256,6 +365,9 @@ let datetime_tests = [
   Alcotest.test_case "DateTime64 with timezone" `Quick test_datetime64_with_timezone;
   Alcotest.test_case "DateTime value formatting" `Quick test_datetime_value_formatting;
   Alcotest.test_case "DateTime64 value formatting" `Quick test_datetime64_value_formatting;
+  Alcotest.test_case "DateTime binary roundtrip" `Quick test_datetime_binary_roundtrip;
+  Alcotest.test_case "DateTime64 binary roundtrip" `Quick test_datetime64_binary_roundtrip;
+  Alcotest.test_case "Multiple DateTime values" `Quick test_multiple_datetime_values;
 ]
 
 (* Main test runner *)
