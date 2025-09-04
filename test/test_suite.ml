@@ -419,6 +419,58 @@ let test_empty_map_formatting () =
   let expected = "{}" in
   Alcotest.(check string) "Empty map formatting" expected map_str
 
+(* Connection pool tests *)
+let test_pool_creation () =
+  let create_fn () = Connection.create ~host:"127.0.0.1" ~port:9000 () in
+  let pool = Pool.create_pool create_fn in
+  let (active, idle, total) = Pool.pool_stats pool in
+  Alcotest.(check int) "active connections" 0 active;
+  Alcotest.(check int) "idle connections" 0 idle;
+  Alcotest.(check int) "total connections" 0 total;
+  Pool.close_pool pool
+
+let test_pool_with_custom_config () =
+  let custom_config = { Pool.default_pool_config with max_open = 10; max_idle = 3 } in
+  let create_fn () = Connection.create ~host:"127.0.0.1" ~port:9000 () in
+  let pool = Pool.create_pool ~config:custom_config create_fn in
+  let (active, idle, total) = Pool.pool_stats pool in
+  Alcotest.(check int) "active connections" 0 active;
+  Alcotest.(check int) "idle connections" 0 idle;
+  Alcotest.(check int) "total connections" 0 total;
+  Pool.close_pool pool
+
+let test_pool_get_and_return_connection () =
+  let create_fn () = Connection.create ~host:"127.0.0.1" ~port:9000 () in
+  let pool = Pool.create_pool create_fn in
+  (* Get a connection *)
+  (match Pool.get_connection pool with
+  | Ok conn -> 
+      let (active, idle, total) = Pool.pool_stats pool in
+      Alcotest.(check int) "active after get" 1 active;
+      Alcotest.(check int) "total after get" 1 total;
+      (* Return the connection *)
+      Pool.return_connection pool conn;
+      let (active2, idle2, total2) = Pool.pool_stats pool in
+      Alcotest.(check int) "active after return" 0 active2;
+      Alcotest.(check int) "idle after return" 1 idle2;
+      Alcotest.(check int) "total after return" 1 total2
+  | Error msg -> Alcotest.fail ("Failed to get connection: " ^ msg)
+  );
+  Pool.close_pool pool
+
+let test_pool_with_connection_helper () =
+  let create_fn () = Connection.create ~host:"127.0.0.1" ~port:9000 () in
+  let pool = Pool.create_pool create_fn in
+  let result = Pool.with_connection pool (fun conn ->
+    (* Just verify we got a connection *)
+    Alcotest.(check bool) "connection created" true (conn.host = "127.0.0.1")
+  ) in
+  (match result with
+  | Ok () -> () 
+  | Error msg -> Alcotest.fail ("with_connection failed: " ^ msg)
+  );
+  Pool.close_pool pool
+
 let datetime_tests = [
   Alcotest.test_case "DateTime parsing" `Quick test_datetime_parsing;
   Alcotest.test_case "DateTime with timezone" `Quick test_datetime_with_timezone;
@@ -445,6 +497,13 @@ let map_tests = [
   Alcotest.test_case "Empty map formatting" `Quick test_empty_map_formatting;
 ]
 
+let pool_tests = [
+  Alcotest.test_case "Pool creation" `Quick test_pool_creation;
+  Alcotest.test_case "Pool with custom config" `Quick test_pool_with_custom_config;
+  Alcotest.test_case "Pool get and return connection" `Quick test_pool_get_and_return_connection;
+  Alcotest.test_case "Pool with_connection helper" `Quick test_pool_with_connection_helper;
+]
+
 (* Main test runner *)
 let () =
   Alcotest.run "Proton OCaml Driver" [
@@ -455,4 +514,5 @@ let () =
     "DateTime", datetime_tests;
     "Array", array_tests;
     "Map", map_tests;
+    "Pool", pool_tests;
   ]

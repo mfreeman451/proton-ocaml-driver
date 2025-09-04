@@ -5,6 +5,10 @@ synopsis:
 depends: [
   "dune" {>= "3.11"}
   "ocaml" {>= "4.14.0"}
+  "tls"
+  "ca-certs"
+  "x509"
+  "ptime"
   "odoc" {with-doc}
 ]
 build: [

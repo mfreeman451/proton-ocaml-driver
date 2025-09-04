@@ -6,6 +6,15 @@ open Read_helpers
 open Context
 open Block
 
+type tls_config = {
+  enable_tls: bool;
+  ca_cert_file: string option;  (* Custom CA certificate file *)
+  client_cert_file: string option;  (* Client certificate for mTLS *)
+  client_key_file: string option;   (* Client private key for mTLS *)
+  verify_hostname: bool;
+  insecure_skip_verify: bool;
+}
+
 type server_info = Context.server_info
 
 type packet =
@@ -23,6 +32,7 @@ type t = {
   database : string;
   user : string;
   password : string;
+  tls_config : tls_config;
   mutable ic : in_channel option;
   mutable oc : out_channel option;
   mutable connected : bool;
@@ -33,16 +43,27 @@ type t = {
   mutable compress_writer : Compress.writer option;
 }
 
+let default_tls_config = {
+  enable_tls = false;
+  ca_cert_file = None;
+  client_cert_file = None;
+  client_key_file = None;
+  verify_hostname = true;
+  insecure_skip_verify = false;
+}
+
 let create ?(host="127.0.0.1") ?(port=Defines.default_port)
            ?(database=Defines.default_database)
            ?(user=Defines.default_user)
            ?(password=Defines.default_password)
+           ?(tls_config=default_tls_config)
            ?(compression=Compress.None)
            ?(settings=[]) () =
   let ctx = Context.make () in
   ctx.settings <- settings;
   {
     host; port; database; user; password;
+    tls_config;
     ic=None; oc=None; connected=false; srv=None;
     ctx;
     compression;
@@ -55,6 +76,39 @@ let with_io t f =
   | Some ic, Some oc -> f ic oc
   | _ -> raise (Network_error "connection not established")
 
+let create_tls_config t =
+  let authenticator_result = 
+    if t.tls_config.insecure_skip_verify then
+      (* Use insecure authenticator - should only be used for testing *)
+      match X509.Authenticator.of_string "none" with
+      | Ok auth_fn -> 
+          let time_fn () = Some (Ptime_clock.now ()) in
+          Result.Ok (auth_fn time_fn)
+      | Error _ as e -> e
+    else
+      match t.tls_config.ca_cert_file with
+      | Some ca_file -> 
+          (* Load custom CA file - placeholder for now *)
+          failwith "Custom CA file support not yet implemented"
+      | None -> 
+          (* Use system trust anchors *)
+          Ca_certs.authenticator ()
+  in
+  match authenticator_result with
+  | Ok auth ->
+      (* Check for client certificates (mTLS) *)
+      let certificates = 
+        match t.tls_config.client_cert_file, t.tls_config.client_key_file with
+        | Some cert_file, Some key_file ->
+            (* For now, we'll implement a simplified version *)
+            failwith "Client certificate support not yet implemented - use without mTLS for now"
+        | _ -> `None
+      in
+      (* Create client configuration *)
+      Tls.Config.client ~authenticator:auth ~certificates ()
+  | Error (`Msg msg) ->
+      failwith ("TLS authenticator setup failed: " ^ msg)
+
 let connect t =
   if t.connected then ()
   else
@@ -64,8 +118,27 @@ let connect t =
     Unix.setsockopt_float fd Unix.SO_RCVTIMEO Defines.dbms_default_timeout_sec;
     Unix.setsockopt_float fd Unix.SO_SNDTIMEO Defines.dbms_default_timeout_sec;
     Unix.connect fd sockaddr;
-    let ic = Unix.in_channel_of_descr fd in
-    let oc = Unix.out_channel_of_descr fd in
+    
+    let (ic, oc) = 
+      if t.tls_config.enable_tls then begin
+        (* TLS connection setup *)
+        let tls_config = create_tls_config t in
+        match tls_config with
+        | Ok client_config ->
+            (* For now, this is a placeholder. Full TLS implementation would require:
+             * 1. TLS handshake using Tls.Engine
+             * 2. Wrapping Unix channels with TLS encryption/decryption
+             * 3. Handling TLS record protocol
+             * This is a substantial amount of code and would be better served
+             * by using tls-lwt or similar high-level library. *)
+            failwith "TLS connection setup not yet fully implemented - use enable_tls=false for now"
+        | Error (`Msg msg) ->
+            failwith ("TLS configuration failed: " ^ msg)
+      end else begin
+        (Unix.in_channel_of_descr fd, Unix.out_channel_of_descr fd)
+      end
+    in
+    
     t.ic <- Some ic; 
     t.oc <- Some oc;
     (* Initialize compression readers/writers if needed *)
