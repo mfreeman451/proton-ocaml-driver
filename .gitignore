@@ -34,3 +34,7 @@ setup.log
 
 # Local OPAM switch
 _opam/
+
+.claude
+proton-python-driver
+proton-rust-client
