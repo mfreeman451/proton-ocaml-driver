@@ -389,6 +389,36 @@ let test_empty_array_formatting () =
   let expected = "[]" in
   Alcotest.(check string) "Empty array formatting" expected array_str
 
+(* Map column tests *)
+let test_map_parsing () =
+  try
+    let _reader = Columns.reader_of_spec "map(string, int32)" in
+    Alcotest.(check bool) "Map parser created" true true
+  with
+  | _ -> Alcotest.(check bool) "Map parser created" true false
+
+let test_nested_map_parsing () =
+  try
+    let _reader = Columns.reader_of_spec "map(string, array(int32))" in
+    Alcotest.(check bool) "Nested map parser created" true true
+  with
+  | _ -> Alcotest.(check bool) "Nested map parser created" true false
+
+let test_map_value_formatting () =
+  let map_value = Columns.VMap [
+    (Columns.VString "key1", Columns.VInt32 42l);
+    (Columns.VString "key2", Columns.VString "value2")
+  ] in
+  let map_str = Columns.value_to_string map_value in
+  let expected = "{key1:42,key2:value2}" in
+  Alcotest.(check string) "Map formatting" expected map_str
+
+let test_empty_map_formatting () =
+  let empty_map = Columns.VMap [] in
+  let map_str = Columns.value_to_string empty_map in
+  let expected = "{}" in
+  Alcotest.(check string) "Empty map formatting" expected map_str
+
 let datetime_tests = [
   Alcotest.test_case "DateTime parsing" `Quick test_datetime_parsing;
   Alcotest.test_case "DateTime with timezone" `Quick test_datetime_with_timezone;
@@ -408,6 +438,13 @@ let array_tests = [
   Alcotest.test_case "Empty array formatting" `Quick test_empty_array_formatting;
 ]
 
+let map_tests = [
+  Alcotest.test_case "Map parsing" `Quick test_map_parsing;
+  Alcotest.test_case "Nested map parsing" `Quick test_nested_map_parsing;
+  Alcotest.test_case "Map value formatting" `Quick test_map_value_formatting;
+  Alcotest.test_case "Empty map formatting" `Quick test_empty_map_formatting;
+]
+
 (* Main test runner *)
 let () =
   Alcotest.run "Proton OCaml Driver" [
@@ -417,4 +454,5 @@ let () =
     "Connection", connection_tests;
     "DateTime", datetime_tests;
     "Array", array_tests;
+    "Map", map_tests;
   ]

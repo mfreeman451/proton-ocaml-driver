@@ -31,6 +31,10 @@ let rec value_to_string = function
   | VArray values ->
       let elements = List.map value_to_string values in
       "[" ^ String.concat "," elements ^ "]"
+  | VMap pairs ->
+      let pair_strs = List.map (fun (k, v) -> 
+        value_to_string k ^ ":" ^ value_to_string v) pairs in
+      "{" ^ String.concat "," pair_strs ^ "}"
 
 (* reading helpers for simple types *)
 let read_n_int32 ic n =
@@ -84,6 +88,35 @@ let read_n_array ic n element_reader =
   done;
   result
 
+(* Map readers - reads offsets then keys then values *)
+let read_n_map ic n key_reader value_reader =
+  (* Read offsets (UInt64 array) *)
+  let offsets = Array.init n (fun _ -> read_uint64_le ic) in
+  
+  (* Calculate total number of key-value pairs *)
+  let total_pairs = 
+    if n = 0 then 0
+    else Int64.to_int offsets.(n-1)
+  in
+  
+  (* Read all keys and values *)
+  let all_keys = key_reader ic total_pairs in
+  let all_values = value_reader ic total_pairs in
+  
+  (* Split into maps using offsets *)
+  let result = Array.make n (VMap []) in
+  let start_idx = ref 0 in
+  for i = 0 to n - 1 do
+    let end_idx = Int64.to_int offsets.(i) in
+    let map_pairs = ref [] in
+    for j = !start_idx to end_idx - 1 do
+      map_pairs := (all_keys.(j), all_values.(j)) :: !map_pairs
+    done;
+    result.(i) <- VMap (List.rev !map_pairs);
+    start_idx := end_idx
+  done;
+  result
+
 let read_nulls_map ic n : bool array =
   Array.init n (fun _ -> (read_uint8 ic) <> 0)
 
@@ -127,6 +160,18 @@ let parse_array_element_type s =
     let element_type = String.sub s (start + 1) (end_pos - start - 1) in
     String.trim element_type
 
+(* Parse Map type parameters *)
+let parse_map_types s =
+  if not (String.contains s '(') then failwith "Invalid map type"
+  else
+    let start = String.index s '(' in
+    let end_pos = String.rindex s ')' in
+    let types_str = String.sub s (start + 1) (end_pos - start - 1) in
+    let parts = String.split_on_char ',' types_str in
+    match parts with
+    | [key_type; value_type] -> (String.trim key_type, String.trim value_type)
+    | _ -> failwith "Map must have exactly 2 types: key and value"
+
 (* Parse a column type spec (lowercase); implement a subset *)
 let trim s = String.trim s
 let starts_with ~prefix s =
@@ -156,6 +201,11 @@ let rec reader_of_spec (spec:string) : (in_channel -> int -> value array) =
     let element_type = parse_array_element_type s in
     let element_reader = reader_of_spec element_type in
     (fun ic n -> read_n_array ic n element_reader)
+  else if starts_with ~prefix:"map(" s then
+    let (key_type, value_type) = parse_map_types s in
+    let key_reader = reader_of_spec key_type in
+    let value_reader = reader_of_spec value_type in
+    (fun ic n -> read_n_map ic n key_reader value_reader)
   else if starts_with ~prefix:"nullable(" s then
     let inner = String.sub s 9 (String.length s - 10) |> trim in
     let inner_reader = reader_of_spec inner in
@@ -217,6 +267,35 @@ let read_n_array_br br n element_reader =
   done;
   result
 
+(* Map buffered reader *)
+let read_n_map_br br n key_reader value_reader =
+  (* Read offsets (UInt64 array) *)
+  let offsets = Array.init n (fun _ -> read_uint64_le_br br) in
+  
+  (* Calculate total number of key-value pairs *)
+  let total_pairs = 
+    if n = 0 then 0
+    else Int64.to_int offsets.(n-1)
+  in
+  
+  (* Read all keys and values *)
+  let all_keys = key_reader br total_pairs in
+  let all_values = value_reader br total_pairs in
+  
+  (* Split into maps using offsets *)
+  let result = Array.make n (VMap []) in
+  let start_idx = ref 0 in
+  for i = 0 to n - 1 do
+    let end_idx = Int64.to_int offsets.(i) in
+    let map_pairs = ref [] in
+    for j = !start_idx to end_idx - 1 do
+      map_pairs := (all_keys.(j), all_values.(j)) :: !map_pairs
+    done;
+    result.(i) <- VMap (List.rev !map_pairs);
+    start_idx := end_idx
+  done;
+  result
+
 let read_nulls_map_br br n : bool array =
   Array.init n (fun _ -> (read_uint8_br br) <> 0)
 
@@ -242,6 +321,11 @@ let rec reader_of_spec_br (spec:string) : (Buffered_reader.t -> int -> value arr
     let element_type = parse_array_element_type s in
     let element_reader = reader_of_spec_br element_type in
     (fun br n -> read_n_array_br br n element_reader)
+  else if starts_with ~prefix:"map(" s then
+    let (key_type, value_type) = parse_map_types s in
+    let key_reader = reader_of_spec_br key_type in
+    let value_reader = reader_of_spec_br value_type in
+    (fun br n -> read_n_map_br br n key_reader value_reader)
   else if starts_with ~prefix:"nullable(" s then
     let inner = String.sub s 9 (String.length s - 10) |> trim in
     let inner_reader = reader_of_spec_br inner in
