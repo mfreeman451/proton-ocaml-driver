@@ -209,6 +209,242 @@ let connection_tests = [
   Alcotest.test_case "Compression-enabled client" `Quick test_compression_enabled_client;
 ]
 
+(* DateTime column tests *)
+let test_datetime_parsing () =
+  (* Test that parsing doesn't fail *)
+  try
+    let _reader = Columns.reader_of_spec "datetime" in
+    Alcotest.(check bool) "DateTime parser created" true true
+  with
+  | _ -> Alcotest.(check bool) "DateTime parser created" true false
+
+let test_datetime_with_timezone () =
+  try
+    let _reader = Columns.reader_of_spec "datetime('UTC')" in
+    Alcotest.(check bool) "DateTime with timezone parser created" true true
+  with
+  | _ -> Alcotest.(check bool) "DateTime with timezone parser created" true false
+
+let test_datetime64_parsing () =
+  try
+    let _reader = Columns.reader_of_spec "datetime64(3)" in
+    Alcotest.(check bool) "DateTime64 parser created" true true
+  with
+  | _ -> Alcotest.(check bool) "DateTime64 parser created" true false
+
+let test_datetime64_with_timezone () =
+  try
+    let _reader = Columns.reader_of_spec "datetime64(6, 'America/New_York')" in
+    Alcotest.(check bool) "DateTime64 with timezone parser created" true true
+  with
+  | _ -> Alcotest.(check bool) "DateTime64 with timezone parser created" true false
+
+let test_datetime_value_formatting () =
+  let dt_value = Columns.VDateTime (1609459200L, Some "UTC") in (* 2021-01-01 00:00:00 UTC *)
+  let dt_str = Columns.value_to_string dt_value in
+  Alcotest.(check bool) "DateTime value formatting" true (String.length dt_str > 0)
+
+let test_datetime64_value_formatting () =
+  let dt64_value = Columns.VDateTime64 (1609459200000L, 3, Some "UTC") in
+  let dt64_str = Columns.value_to_string dt64_value in
+  Alcotest.(check bool) "DateTime64 value formatting" true (String.length dt64_str > 0)
+
+(* Test DateTime binary roundtrip *)
+let test_datetime_binary_roundtrip () =
+  (* Create test data: Unix timestamp for 2021-01-01 00:00:00 UTC *)
+  let test_timestamp = 1609459200L in
+  let test_data = Int64.to_int32 test_timestamp in
+  
+  (* Create binary data manually *)
+  let bytes_data = Bytes.create 4 in
+  let a = Int32.to_int (Int32.logand test_data 0xFFl) in
+  let b = Int32.to_int (Int32.logand (Int32.shift_right_logical test_data 8) 0xFFl) in
+  let c = Int32.to_int (Int32.logand (Int32.shift_right_logical test_data 16) 0xFFl) in
+  let d = Int32.to_int (Int32.logand (Int32.shift_right_logical test_data 24) 0xFFl) in
+  Bytes.set_uint8 bytes_data 0 a;
+  Bytes.set_uint8 bytes_data 1 b;
+  Bytes.set_uint8 bytes_data 2 c;
+  Bytes.set_uint8 bytes_data 3 d;
+  
+  (* Create buffered reader from written data *)
+  let br = Buffered_reader.create_from_bytes bytes_data in
+  
+  (* Read using DateTime reader - test without timezone first *)
+  let reader = Columns.reader_of_spec_br "datetime" in
+  let values = reader br 1 in
+  
+  (* Verify we got the expected value *)
+  match values.(0) with
+  | Columns.VDateTime (ts, tz) ->
+      Alcotest.(check bool) "DateTime timestamp matches" true (ts = test_timestamp);
+      Alcotest.(check bool) "DateTime timezone matches" true (tz = None)
+  | _ -> Alcotest.fail "Expected VDateTime value"
+
+(* Test DateTime64 binary roundtrip *)  
+let test_datetime64_binary_roundtrip () =
+  (* Create test data: millisecond timestamp *)
+  let test_value = 1609459200123L in (* 2021-01-01 00:00:00.123 *)
+  
+  (* Create 8-byte binary data manually *)
+  let bytes_data = Bytes.create 8 in
+  let low = Int64.to_int (Int64.logand test_value 0xFFFFFFFFL) in
+  let high = Int64.to_int (Int64.shift_right_logical test_value 32) in
+  
+  (* Low 4 bytes *)
+  let a = low land 0xFF in
+  let b = (low lsr 8) land 0xFF in
+  let c = (low lsr 16) land 0xFF in
+  let d = (low lsr 24) land 0xFF in
+  
+  (* High 4 bytes *)
+  let e = high land 0xFF in
+  let f = (high lsr 8) land 0xFF in
+  let g = (high lsr 16) land 0xFF in
+  let h = (high lsr 24) land 0xFF in
+  
+  Bytes.set_uint8 bytes_data 0 a;
+  Bytes.set_uint8 bytes_data 1 b;
+  Bytes.set_uint8 bytes_data 2 c;
+  Bytes.set_uint8 bytes_data 3 d;
+  Bytes.set_uint8 bytes_data 4 e;
+  Bytes.set_uint8 bytes_data 5 f;
+  Bytes.set_uint8 bytes_data 6 g;
+  Bytes.set_uint8 bytes_data 7 h;
+  
+  (* Create buffered reader from written data *)
+  let br = Buffered_reader.create_from_bytes bytes_data in
+  
+  (* Read using DateTime64 reader - test without timezone first *)
+  let reader = Columns.reader_of_spec_br "datetime64(3)" in
+  let values = reader br 1 in
+  
+  (* Verify we got the expected value *)
+  match values.(0) with
+  | Columns.VDateTime64 (value, precision, tz) ->
+      Alcotest.(check bool) "DateTime64 value matches" true (value = test_value);
+      Alcotest.(check bool) "DateTime64 precision matches" true (precision = 3);
+      Alcotest.(check bool) "DateTime64 timezone matches" true (tz = None)
+  | _ -> Alcotest.fail "Expected VDateTime64 value"
+
+(* Test reading multiple DateTime values *)
+let test_multiple_datetime_values () =
+  (* Create test data for 3 DateTime values *)
+  let timestamps = [1609459200L; 1640995200L; 1672531200L] in (* 2021, 2022, 2023 *)
+  let bytes_data = Bytes.create 12 in (* 3 * 4 bytes *)
+  
+  List.iteri (fun i ts ->
+    let test_data = Int64.to_int32 ts in
+    let offset = i * 4 in
+    let a = Int32.to_int (Int32.logand test_data 0xFFl) in
+    let b = Int32.to_int (Int32.logand (Int32.shift_right_logical test_data 8) 0xFFl) in
+    let c = Int32.to_int (Int32.logand (Int32.shift_right_logical test_data 16) 0xFFl) in
+    let d = Int32.to_int (Int32.logand (Int32.shift_right_logical test_data 24) 0xFFl) in
+    Bytes.set_uint8 bytes_data (offset + 0) a;
+    Bytes.set_uint8 bytes_data (offset + 1) b;
+    Bytes.set_uint8 bytes_data (offset + 2) c;
+    Bytes.set_uint8 bytes_data (offset + 3) d;
+  ) timestamps;
+  
+  let br = Buffered_reader.create_from_bytes bytes_data in
+  let reader = Columns.reader_of_spec_br "datetime" in
+  let values = reader br 3 in
+  
+  (* Verify all values *)
+  for i = 0 to 2 do
+    match values.(i) with
+    | Columns.VDateTime (ts, tz) ->
+        Alcotest.(check bool) ("DateTime value " ^ string_of_int i) true (ts = List.nth timestamps i);
+        Alcotest.(check bool) ("DateTime timezone " ^ string_of_int i) true (tz = None)
+    | _ -> Alcotest.fail "Expected VDateTime value"
+  done
+
+(* Array column tests *)
+let test_array_parsing () =
+  try
+    let _reader = Columns.reader_of_spec "array(string)" in
+    Alcotest.(check bool) "Array parser created" true true
+  with
+  | _ -> Alcotest.(check bool) "Array parser created" true false
+
+let test_nested_array_parsing () =
+  try
+    let _reader = Columns.reader_of_spec "array(array(int32))" in
+    Alcotest.(check bool) "Nested array parser created" true true
+  with
+  | _ -> Alcotest.(check bool) "Nested array parser created" true false
+
+let test_array_value_formatting () =
+  let array_value = Columns.VArray [
+    Columns.VString "hello";
+    Columns.VString "world";
+    Columns.VInt32 42l
+  ] in
+  let array_str = Columns.value_to_string array_value in
+  let expected = "[hello,world,42]" in
+  Alcotest.(check string) "Array formatting" expected array_str
+
+let test_empty_array_formatting () =
+  let empty_array = Columns.VArray [] in
+  let array_str = Columns.value_to_string empty_array in
+  let expected = "[]" in
+  Alcotest.(check string) "Empty array formatting" expected array_str
+
+(* Map column tests *)
+let test_map_parsing () =
+  try
+    let _reader = Columns.reader_of_spec "map(string, int32)" in
+    Alcotest.(check bool) "Map parser created" true true
+  with
+  | _ -> Alcotest.(check bool) "Map parser created" true false
+
+let test_nested_map_parsing () =
+  try
+    let _reader = Columns.reader_of_spec "map(string, array(int32))" in
+    Alcotest.(check bool) "Nested map parser created" true true
+  with
+  | _ -> Alcotest.(check bool) "Nested map parser created" true false
+
+let test_map_value_formatting () =
+  let map_value = Columns.VMap [
+    (Columns.VString "key1", Columns.VInt32 42l);
+    (Columns.VString "key2", Columns.VString "value2")
+  ] in
+  let map_str = Columns.value_to_string map_value in
+  let expected = "{key1:42,key2:value2}" in
+  Alcotest.(check string) "Map formatting" expected map_str
+
+let test_empty_map_formatting () =
+  let empty_map = Columns.VMap [] in
+  let map_str = Columns.value_to_string empty_map in
+  let expected = "{}" in
+  Alcotest.(check string) "Empty map formatting" expected map_str
+
+let datetime_tests = [
+  Alcotest.test_case "DateTime parsing" `Quick test_datetime_parsing;
+  Alcotest.test_case "DateTime with timezone" `Quick test_datetime_with_timezone;
+  Alcotest.test_case "DateTime64 parsing" `Quick test_datetime64_parsing;
+  Alcotest.test_case "DateTime64 with timezone" `Quick test_datetime64_with_timezone;
+  Alcotest.test_case "DateTime value formatting" `Quick test_datetime_value_formatting;
+  Alcotest.test_case "DateTime64 value formatting" `Quick test_datetime64_value_formatting;
+  Alcotest.test_case "DateTime binary roundtrip" `Quick test_datetime_binary_roundtrip;
+  Alcotest.test_case "DateTime64 binary roundtrip" `Quick test_datetime64_binary_roundtrip;
+  Alcotest.test_case "Multiple DateTime values" `Quick test_multiple_datetime_values;
+]
+
+let array_tests = [
+  Alcotest.test_case "Array parsing" `Quick test_array_parsing;
+  Alcotest.test_case "Nested array parsing" `Quick test_nested_array_parsing;
+  Alcotest.test_case "Array value formatting" `Quick test_array_value_formatting;
+  Alcotest.test_case "Empty array formatting" `Quick test_empty_array_formatting;
+]
+
+let map_tests = [
+  Alcotest.test_case "Map parsing" `Quick test_map_parsing;
+  Alcotest.test_case "Nested map parsing" `Quick test_nested_map_parsing;
+  Alcotest.test_case "Map value formatting" `Quick test_map_value_formatting;
+  Alcotest.test_case "Empty map formatting" `Quick test_empty_map_formatting;
+]
+
 (* Main test runner *)
 let () =
   Alcotest.run "Proton OCaml Driver" [
@@ -216,4 +452,7 @@ let () =
     "Compression", compression_tests;
     "Binary", binary_tests;
     "Connection", connection_tests;
+    "DateTime", datetime_tests;
+    "Array", array_tests;
+    "Map", map_tests;
   ]
