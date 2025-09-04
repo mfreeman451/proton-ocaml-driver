@@ -358,6 +358,37 @@ let test_multiple_datetime_values () =
     | _ -> Alcotest.fail "Expected VDateTime value"
   done
 
+(* Array column tests *)
+let test_array_parsing () =
+  try
+    let _reader = Columns.reader_of_spec "array(string)" in
+    Alcotest.(check bool) "Array parser created" true true
+  with
+  | _ -> Alcotest.(check bool) "Array parser created" true false
+
+let test_nested_array_parsing () =
+  try
+    let _reader = Columns.reader_of_spec "array(array(int32))" in
+    Alcotest.(check bool) "Nested array parser created" true true
+  with
+  | _ -> Alcotest.(check bool) "Nested array parser created" true false
+
+let test_array_value_formatting () =
+  let array_value = Columns.VArray [
+    Columns.VString "hello";
+    Columns.VString "world";
+    Columns.VInt32 42l
+  ] in
+  let array_str = Columns.value_to_string array_value in
+  let expected = "[hello,world,42]" in
+  Alcotest.(check string) "Array formatting" expected array_str
+
+let test_empty_array_formatting () =
+  let empty_array = Columns.VArray [] in
+  let array_str = Columns.value_to_string empty_array in
+  let expected = "[]" in
+  Alcotest.(check string) "Empty array formatting" expected array_str
+
 let datetime_tests = [
   Alcotest.test_case "DateTime parsing" `Quick test_datetime_parsing;
   Alcotest.test_case "DateTime with timezone" `Quick test_datetime_with_timezone;
@@ -370,6 +401,13 @@ let datetime_tests = [
   Alcotest.test_case "Multiple DateTime values" `Quick test_multiple_datetime_values;
 ]
 
+let array_tests = [
+  Alcotest.test_case "Array parsing" `Quick test_array_parsing;
+  Alcotest.test_case "Nested array parsing" `Quick test_nested_array_parsing;
+  Alcotest.test_case "Array value formatting" `Quick test_array_value_formatting;
+  Alcotest.test_case "Empty array formatting" `Quick test_empty_array_formatting;
+]
+
 (* Main test runner *)
 let () =
   Alcotest.run "Proton OCaml Driver" [
@@ -378,4 +416,5 @@ let () =
     "Binary", binary_tests;
     "Connection", connection_tests;
     "DateTime", datetime_tests;
+    "Array", array_tests;
   ]

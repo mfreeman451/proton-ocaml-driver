@@ -11,8 +11,10 @@ type value =
   | VFloat64 of float
   | VDateTime of int64 * string option  (* Unix timestamp, timezone *)
   | VDateTime64 of int64 * int * string option  (* value, precision, timezone *)
+  | VArray of value list  (* Array of values *)
+  | VMap of (value * value) list  (* Map of key-value pairs *)
 
-let value_to_string = function
+let rec value_to_string = function
   | VNull -> "NULL"
   | VString s -> s
   | VInt32 i -> Int32.to_string i
@@ -26,6 +28,9 @@ let value_to_string = function
   | VDateTime64 (value, precision, tz) ->
       let tz_str = match tz with Some z -> " " ^ z | None -> "" in
       Printf.sprintf "%Ld(p=%d)%s" value precision tz_str
+  | VArray values ->
+      let elements = List.map value_to_string values in
+      "[" ^ String.concat "," elements ^ "]"
 
 (* reading helpers for simple types *)
 let read_n_int32 ic n =
@@ -53,6 +58,31 @@ let read_n_datetime64 ic n precision timezone =
   Array.init n (fun _ ->
     let value = read_uint64_le ic in
     VDateTime64 (value, precision, timezone))
+
+(* Array readers - reads offsets then values *)
+let read_n_array ic n element_reader =
+  (* Read offsets (UInt64 array) *)
+  let offsets = Array.init n (fun _ -> read_uint64_le ic) in
+  
+  (* Calculate total number of elements *)
+  let total_elements = 
+    if n = 0 then 0
+    else Int64.to_int offsets.(n-1)
+  in
+  
+  (* Read all element values *)
+  let all_elements = element_reader ic total_elements in
+  
+  (* Split elements into arrays using offsets *)
+  let result = Array.make n (VArray []) in
+  let start_idx = ref 0 in
+  for i = 0 to n - 1 do
+    let end_idx = Int64.to_int offsets.(i) in
+    let array_elements = Array.sub all_elements !start_idx (end_idx - !start_idx) in
+    result.(i) <- VArray (Array.to_list array_elements);
+    start_idx := end_idx
+  done;
+  result
 
 let read_nulls_map ic n : bool array =
   Array.init n (fun _ -> (read_uint8 ic) <> 0)
@@ -88,6 +118,15 @@ let parse_datetime64_params s =
         (precision, Some clean_tz)
     | _ -> (3, None)
 
+(* Parse Array type parameters *)
+let parse_array_element_type s =
+  if not (String.contains s '(') then failwith "Invalid array type"
+  else
+    let start = String.index s '(' in
+    let end_pos = String.rindex s ')' in
+    let element_type = String.sub s (start + 1) (end_pos - start - 1) in
+    String.trim element_type
+
 (* Parse a column type spec (lowercase); implement a subset *)
 let trim s = String.trim s
 let starts_with ~prefix s =
@@ -113,6 +152,10 @@ let rec reader_of_spec (spec:string) : (in_channel -> int -> value array) =
                         then String.sub tz 1 (String.length tz - 2) else tz)
     in
     (fun ic n -> read_n_datetime ic n timezone)
+  else if starts_with ~prefix:"array(" s then
+    let element_type = parse_array_element_type s in
+    let element_reader = reader_of_spec element_type in
+    (fun ic n -> read_n_array ic n element_reader)
   else if starts_with ~prefix:"nullable(" s then
     let inner = String.sub s 9 (String.length s - 10) |> trim in
     let inner_reader = reader_of_spec inner in
@@ -149,6 +192,31 @@ let read_n_datetime64_br br n precision timezone =
     let value = read_uint64_le_br br in
     VDateTime64 (value, precision, timezone))
 
+(* Array buffered reader *)
+let read_n_array_br br n element_reader =
+  (* Read offsets (UInt64 array) *)
+  let offsets = Array.init n (fun _ -> read_uint64_le_br br) in
+  
+  (* Calculate total number of elements *)
+  let total_elements = 
+    if n = 0 then 0
+    else Int64.to_int offsets.(n-1)
+  in
+  
+  (* Read all element values *)
+  let all_elements = element_reader br total_elements in
+  
+  (* Split elements into arrays using offsets *)
+  let result = Array.make n (VArray []) in
+  let start_idx = ref 0 in
+  for i = 0 to n - 1 do
+    let end_idx = Int64.to_int offsets.(i) in
+    let array_elements = Array.sub all_elements !start_idx (end_idx - !start_idx) in
+    result.(i) <- VArray (Array.to_list array_elements);
+    start_idx := end_idx
+  done;
+  result
+
 let read_nulls_map_br br n : bool array =
   Array.init n (fun _ -> (read_uint8_br br) <> 0)
 
@@ -170,6 +238,10 @@ let rec reader_of_spec_br (spec:string) : (Buffered_reader.t -> int -> value arr
                         then String.sub tz 1 (String.length tz - 2) else tz)
     in
     (fun br n -> read_n_datetime_br br n timezone)
+  else if starts_with ~prefix:"array(" s then
+    let element_type = parse_array_element_type s in
+    let element_reader = reader_of_spec_br element_type in
+    (fun br n -> read_n_array_br br n element_reader)
   else if starts_with ~prefix:"nullable(" s then
     let inner = String.sub s 9 (String.length s - 10) |> trim in
     let inner_reader = reader_of_spec_br inner in
