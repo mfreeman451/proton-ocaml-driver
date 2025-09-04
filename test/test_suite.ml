@@ -209,6 +209,55 @@ let connection_tests = [
   Alcotest.test_case "Compression-enabled client" `Quick test_compression_enabled_client;
 ]
 
+(* DateTime column tests *)
+let test_datetime_parsing () =
+  (* Test that parsing doesn't fail *)
+  try
+    let _reader = Columns.reader_of_spec "datetime" in
+    Alcotest.(check bool) "DateTime parser created" true true
+  with
+  | _ -> Alcotest.(check bool) "DateTime parser created" true false
+
+let test_datetime_with_timezone () =
+  try
+    let _reader = Columns.reader_of_spec "datetime('UTC')" in
+    Alcotest.(check bool) "DateTime with timezone parser created" true true
+  with
+  | _ -> Alcotest.(check bool) "DateTime with timezone parser created" true false
+
+let test_datetime64_parsing () =
+  try
+    let _reader = Columns.reader_of_spec "datetime64(3)" in
+    Alcotest.(check bool) "DateTime64 parser created" true true
+  with
+  | _ -> Alcotest.(check bool) "DateTime64 parser created" true false
+
+let test_datetime64_with_timezone () =
+  try
+    let _reader = Columns.reader_of_spec "datetime64(6, 'America/New_York')" in
+    Alcotest.(check bool) "DateTime64 with timezone parser created" true true
+  with
+  | _ -> Alcotest.(check bool) "DateTime64 with timezone parser created" true false
+
+let test_datetime_value_formatting () =
+  let dt_value = Columns.VDateTime (1609459200L, Some "UTC") in (* 2021-01-01 00:00:00 UTC *)
+  let dt_str = Columns.value_to_string dt_value in
+  Alcotest.(check bool) "DateTime value formatting" true (String.length dt_str > 0)
+
+let test_datetime64_value_formatting () =
+  let dt64_value = Columns.VDateTime64 (1609459200000L, 3, Some "UTC") in
+  let dt64_str = Columns.value_to_string dt64_value in
+  Alcotest.(check bool) "DateTime64 value formatting" true (String.length dt64_str > 0)
+
+let datetime_tests = [
+  Alcotest.test_case "DateTime parsing" `Quick test_datetime_parsing;
+  Alcotest.test_case "DateTime with timezone" `Quick test_datetime_with_timezone;
+  Alcotest.test_case "DateTime64 parsing" `Quick test_datetime64_parsing;
+  Alcotest.test_case "DateTime64 with timezone" `Quick test_datetime64_with_timezone;
+  Alcotest.test_case "DateTime value formatting" `Quick test_datetime_value_formatting;
+  Alcotest.test_case "DateTime64 value formatting" `Quick test_datetime64_value_formatting;
+]
+
 (* Main test runner *)
 let () =
   Alcotest.run "Proton OCaml Driver" [
@@ -216,4 +265,5 @@ let () =
     "Compression", compression_tests;
     "Binary", binary_tests;
     "Connection", connection_tests;
+    "DateTime", datetime_tests;
   ]
