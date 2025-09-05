@@ -1,4 +1,4 @@
-# Proton OCaml Driver
+# 🐪 Timeplus Proton OCaml Driver
 
 OCaml driver for [Timeplus Proton](https://timeplus.com/proton), a streaming database based on ClickHouse.
 
