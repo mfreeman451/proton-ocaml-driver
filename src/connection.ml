@@ -91,6 +91,36 @@ let read_varint_int_lwt read_fn =
     if (b land 0x80) <> 0 then loop (shift + 7) v else Lwt.return v
   in loop 0 0
 
+let read_int32_le_lwt read_fn =
+  lwt_read_exact read_fn 4 >|= fun buf ->
+  let a = Char.code (Bytes.get buf 0) in
+  let b = Char.code (Bytes.get buf 1) in
+  let c = Char.code (Bytes.get buf 2) in
+  let d = Char.code (Bytes.get buf 3) in
+  Int32.logor
+    (Int32.of_int a)
+    (Int32.logor
+       (Int32.shift_left (Int32.of_int b) 8)
+       (Int32.logor
+          (Int32.shift_left (Int32.of_int c) 16)
+          (Int32.shift_left (Int32.of_int d) 24)))
+
+let read_uint64_le_lwt read_fn =
+  lwt_read_exact read_fn 8 >|= fun buf ->
+  let open Int64 in
+  let b i = Int64.of_int (Char.code (Bytes.get buf i)) in
+  logor (b 0)
+    (logor (shift_left (b 1) 8)
+       (logor (shift_left (b 2) 16)
+          (logor (shift_left (b 3) 24)
+             (logor (shift_left (b 4) 32)
+                (logor (shift_left (b 5) 40)
+                   (logor (shift_left (b 6) 48)
+                      (shift_left (b 7) 56)))))))
+
+let read_float64_le_lwt read_fn =
+  read_uint64_le_lwt read_fn >|= Int64.float_of_bits
+
 let read_str_lwt read_fn =
   read_varint_int_lwt read_fn >>= fun len ->
   if len = 0 then Lwt.return ""
@@ -275,11 +305,74 @@ let read_compressed_block_lwt read_fn : bytes Lwt.t =
 
 let receive_data t ~raw read_fn : Block.t Lwt.t =
   let revision = match t.srv with Some s -> s.revision | None -> 0 in
-  if raw || t.compression = Compress.None then Lwt.fail (Failure "Uncompressed path not implemented in async driver")
-  else
+  if raw || t.compression = Compress.None then (
+    (* Uncompressed block: parse directly from stream *)
+    (if revision >= Defines.dbms_min_revision_with_block_info then (
+        let rec loop bi =
+          read_varint_int_lwt read_fn >>= fun field ->
+          match field with
+          | 0 -> Lwt.return bi
+          | 1 -> read_byte read_fn >>= fun b -> bi.Block_info.is_overflows <- (b <> 0); loop bi
+          | 2 -> read_int32_le_lwt read_fn >>= fun n -> bi.bucket_num <- Int32.to_int n; loop bi
+          | _ -> loop bi
+        in
+        loop { Block_info.is_overflows=false; bucket_num = -1 }
+      ) else Lwt.return { Block_info.is_overflows=false; bucket_num = -1 }) >>= fun info ->
+    read_varint_int_lwt read_fn >>= fun n_columns ->
+    read_varint_int_lwt read_fn >>= fun n_rows ->
+    let open Columns in
+    let read_nulls_map n =
+      let arr = Array.make n false in
+      let rec fill i = if i = n then Lwt.return_unit else read_byte read_fn >>= fun b -> arr.(i) <- (b<>0); fill (i+1) in
+      fill 0 >|= fun () -> arr
+    in
+    let rec read_values type_spec n : value array Lwt.t =
+      let s = String.lowercase_ascii (String.trim type_spec) in
+      if s = "string" then (
+        let a = Array.make n VNull in
+        let rec loop i = if i = n then Lwt.return_unit else read_str_lwt read_fn >>= fun v -> a.(i) <- VString v; loop (i+1) in
+        loop 0 >|= fun () -> a
+      ) else if s = "int32" then (
+        let a = Array.make n VNull in
+        let rec loop i = if i = n then Lwt.return_unit else read_int32_le_lwt read_fn >>= fun v -> a.(i) <- VInt32 v; loop (i+1) in
+        loop 0 >|= fun () -> a
+      ) else if s = "uint32" then (
+        let a = Array.make n VNull in
+        let rec loop i = if i = n then Lwt.return_unit else read_int32_le_lwt read_fn >>= fun v -> a.(i) <- VUInt32 v; loop (i+1) in
+        loop 0 >|= fun () -> a
+      ) else if s = "int64" then (
+        let a = Array.make n VNull in
+        let rec loop i = if i = n then Lwt.return_unit else read_uint64_le_lwt read_fn >>= fun v -> a.(i) <- VInt64 v; loop (i+1) in
+        loop 0 >|= fun () -> a
+      ) else if s = "uint64" then (
+        let a = Array.make n VNull in
+        let rec loop i = if i = n then Lwt.return_unit else read_uint64_le_lwt read_fn >>= fun v -> a.(i) <- VUInt64 v; loop (i+1) in
+        loop 0 >|= fun () -> a
+      ) else if s = "float64" then (
+        let a = Array.make n VNull in
+        let rec loop i = if i = n then Lwt.return_unit else read_float64_le_lwt read_fn >>= fun v -> a.(i) <- VFloat64 v; loop (i+1) in
+        loop 0 >|= fun () -> a
+      ) else if String.length s >= 9 && String.sub s 0 9 = "nullable(" then (
+        let inner = String.sub s 9 (String.length s - 10) |> String.trim in
+        read_nulls_map n >>= fun nulls ->
+        read_values inner n >|= fun vals ->
+        for i = 0 to n-1 do if nulls.(i) then vals.(i) <- VNull done; vals
+      ) else Lwt.fail (Failure (Printf.sprintf "Unsupported column type in async: %s" type_spec))
+    in
+    let rec read_columns i acc =
+      if i = n_columns then Lwt.return (List.rev acc) else
+        read_str_lwt read_fn >>= fun name ->
+        read_str_lwt read_fn >>= fun type_spec ->
+        (if n_rows = 0 then Lwt.return [||] else read_values type_spec n_rows) >>= fun data ->
+        let c = { Block.name; type_spec; data } in
+        read_columns (i+1) (c::acc)
+    in
+    read_columns 0 [] >|= fun columns -> { Block.info; columns; n_rows }
+  ) else (
     read_compressed_block_lwt read_fn >>= fun decompressed ->
     let br = Buffered_reader.create_from_bytes decompressed in
     Lwt.return (Block.read_block_br ~revision br)
+  )
 
 let receive_packet t : packet Lwt.t =
   let read_fn = match t.tls, t.fd with
@@ -290,7 +383,24 @@ let receive_packet t : packet Lwt.t =
   read_varint_int_lwt read_fn >>= fun ptype ->
   match Protocol.server_packet_of_int ptype with
   | SData -> receive_data t ~raw:false read_fn >|= fun b -> PData b
-  | SException -> Lwt.fail (Failure "Server exception not implemented in async path yet")
+  | SException ->
+      let rec read_exception_lwt () =
+        read_int32_le_lwt read_fn >>= fun code32 ->
+        let code = Int32.to_int code32 in
+        read_str_lwt read_fn >>= fun name ->
+        read_str_lwt read_fn >>= fun msg ->
+        read_str_lwt read_fn >>= fun stack ->
+        read_byte read_fn >>= fun has_nested ->
+        let base = (if name <> "DB::Exception" then name ^ ". " else "") ^ msg ^ ". Stack trace:\n\n" ^ stack in
+        (if has_nested <> 0 then
+           read_exception_lwt () >|= fun nested_exn ->
+             match nested_exn with
+             | Errors.Server_exception se -> Some se.message
+             | e -> Some (Printexc.to_string e)
+         else Lwt.return_none) >>= fun nested ->
+        Lwt.return (Errors.Server_exception { code; message = base; nested })
+      in
+      read_exception_lwt () >>= fun e -> Lwt.fail e
   | SProgress -> read_progress t read_fn >|= fun () -> PProgress
   | SEndOfStream -> Lwt.return PEndOfStream
   | SProfileInfo -> read_profile_info t read_fn >|= fun () -> PProfileInfo
@@ -299,3 +409,28 @@ let receive_packet t : packet Lwt.t =
   | SLog -> receive_data t ~raw:true read_fn >|= fun b -> PLog b
   | STableColumns -> read_str_lwt read_fn >>= fun _ -> read_str_lwt read_fn >|= fun _ -> PProgress
   | SPartUUIDs | SReadTaskRequest | SProfileEvents -> receive_data t ~raw:false read_fn >|= fun _ -> PProgress
+
+let read_exception_from_bytes (bs:bytes) : exn Lwt.t =
+  let pos = ref 0 in
+  let read_fn buf off len =
+    let remaining = Bytes.length bs - !pos in
+    let to_copy = min len remaining in
+    Bytes.blit bs !pos buf off to_copy; pos := !pos + to_copy; Lwt.return to_copy
+  in
+  let rec read_exception_lwt () =
+    read_int32_le_lwt read_fn >>= fun code32 ->
+    let code = Int32.to_int code32 in
+    read_str_lwt read_fn >>= fun name ->
+    read_str_lwt read_fn >>= fun msg ->
+    read_str_lwt read_fn >>= fun stack ->
+    read_byte read_fn >>= fun has_nested ->
+    let base = (if name <> "DB::Exception" then name ^ ". " else "") ^ msg ^ ". Stack trace:\n\n" ^ stack in
+    (if has_nested <> 0 then
+       read_exception_lwt () >|= fun nested_exn ->
+         match nested_exn with
+         | Errors.Server_exception se -> Some se.message
+         | e -> Some (Printexc.to_string e)
+     else Lwt.return_none) >>= fun nested ->
+    Lwt.return (Errors.Server_exception { code; message = base; nested })
+  in
+  read_exception_lwt ()
