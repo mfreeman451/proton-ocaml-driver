@@ -9,7 +9,7 @@ build:
 
 # Run all tests (always shows output)  
 test:
-	@opam exec -- dune runtest
+	@opam exec -- dune exec test_lwt/test_suite_lwt.exe
 
 # Run tests silently (only shows failures)
 test-silent:
