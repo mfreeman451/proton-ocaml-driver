@@ -422,13 +422,27 @@ let test_datetime_binary_roundtrip () =
 
 (* Test DateTime64 binary roundtrip *)  
 let test_datetime64_binary_roundtrip () =
-  (* TODO: This test needs debugging - the DateTime64 parser might not be working as expected *)
-  (* For now, just test that the parser can be created without failing *)
-  try
-    let _reader = Columns.reader_of_spec_br "datetime64(3)" in
-    Alcotest.(check bool) "DateTime64 parser created successfully" true true
-  with
-  | e -> Alcotest.fail ("DateTime64 parser creation failed: " ^ (Printexc.to_string e))
+  (* Create test data: millisecond timestamp *)
+  let test_value = 1609459200123L in (* 2021-01-01 00:00:00.123 *)
+  
+  (* Create 8-byte binary data using the proper binary encoding *)
+  let bytes_data = Bytes.create 8 in
+  Binary.bytes_set_int64_le bytes_data 0 test_value;
+  
+  (* Create buffered reader from written data *)
+  let br = Buffered_reader.create_from_bytes bytes_data in
+  
+  (* Read using DateTime64 reader - test without timezone first *)
+  let reader = Columns.reader_of_spec_br "datetime64(3)" in
+  let values = reader br 1 in
+  
+  (* Verify we got the expected value *)
+  match values.(0) with
+  | Columns.VDateTime64 (value, precision, tz) ->
+      Alcotest.(check bool) "DateTime64 value matches" true (value = test_value);
+      Alcotest.(check bool) "DateTime64 precision matches" true (precision = 3);
+      Alcotest.(check bool) "DateTime64 timezone matches" true (tz = None)
+  | _ -> Alcotest.fail "Expected VDateTime64 value"
 
 (* Test reading multiple DateTime values *)
 let test_multiple_datetime_values () =

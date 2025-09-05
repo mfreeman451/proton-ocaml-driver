@@ -39,7 +39,7 @@ let reader_datetime_of_spec (s:string)
       let days = read_int32_le ic |> Int32.to_int in
       let seconds = Int64.of_int (days * 86400) in
       VString (let tm = Unix.gmtime (Int64.to_float seconds) in Printf.sprintf "%04d-%02d-%02d" (tm.tm_year+1900) (tm.tm_mon+1) tm.tm_mday)))
-  | _ when String.length s >= 9 && String.sub s 0 9 = "datetime64" ->
+  | _ when String.length s >= 10 && String.sub s 0 10 = "datetime64" ->
       let (precision, timezone) = parse_datetime64_params s in
       Some (fun ic n -> Array.init n (fun _ -> let value = read_uint64_le ic in VDateTime64 (value, precision, timezone)))
   | _ when String.length s >= 8 && String.sub s 0 8 = "datetime" ->
@@ -61,7 +61,7 @@ let reader_datetime_of_spec_br (s:string)
       let days = read_int32_le_br br |> Int32.to_int in
       let seconds = Int64.of_int (days * 86400) in
       VString (let tm = Unix.gmtime (Int64.to_float seconds) in Printf.sprintf "%04d-%02d-%02d" (tm.tm_year+1900) (tm.tm_mon+1) tm.tm_mday)))
-  | _ when String.length s >= 9 && String.sub s 0 9 = "datetime64" ->
+  | _ when String.length s >= 10 && String.sub s 0 10 = "datetime64" ->
       let (precision, timezone) = parse_datetime64_params s in
       Some (fun br n -> Array.init n (fun _ -> let value = read_uint64_le_br br in VDateTime64 (value, precision, timezone)))
   | _ when String.length s >= 8 && String.sub s 0 8 = "datetime" ->
