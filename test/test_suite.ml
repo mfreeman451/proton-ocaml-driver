@@ -202,8 +202,39 @@ let test_map_parsing () =
   with
   | _ -> Alcotest.(check bool) "Map parser created" true false
 
-(* Note: Pool module was not mentioned in the new implementation, 
-   so we'll skip pool tests for now *)
+let test_tuple_value_formatting () =
+  (* Test the new VTuple type *)
+  let tuple_value = Columns_types.VTuple [
+    Columns_types.VString "hello";
+    Columns_types.VInt32 42l;
+    Columns_types.VFloat64 3.14
+  ] in
+  let tuple_str = Columns_types.value_to_string tuple_value in
+  let expected = "(hello,42,3.14)" in
+  Alcotest.(check string) "Tuple formatting" expected tuple_str
+
+let test_lowcardinality_parsing () =
+  try
+    let _reader = Columns.reader_of_spec "lowcardinality(string)" in
+    Alcotest.(check bool) "LowCardinality parser created" true true
+  with
+  | _ -> Alcotest.(check bool) "LowCardinality parser created" true false
+
+let test_enum_parsing () =
+  try
+    let _reader = Columns.reader_of_spec "enum8('hello' = 1, 'world' = 2)" in
+    Alcotest.(check bool) "Enum8 parser created" true true
+  with
+  | _ -> Alcotest.(check bool) "Enum8 parser created" true false
+
+(* Pool_lwt tests - async connection pooling *)
+let test_pool_lwt_creation () =
+  let create_fn () = Connection.create ~host:"127.0.0.1" ~port:9000 () in
+  try
+    let _pool = Pool_lwt.create_pool create_fn in
+    Alcotest.(check bool) "Pool_lwt creation succeeds" true true
+  with
+  | _ -> Alcotest.(check bool) "Pool_lwt creation succeeds" true false
 
 (* Define test suites *)
 let cityhash_tests = [
@@ -243,6 +274,13 @@ let column_tests = [
   Alcotest.test_case "DateTime64 parsing" `Quick test_datetime64_parsing;
   Alcotest.test_case "Array parsing" `Quick test_array_parsing;
   Alcotest.test_case "Map parsing" `Quick test_map_parsing;
+  Alcotest.test_case "Tuple value formatting" `Quick test_tuple_value_formatting;
+  Alcotest.test_case "LowCardinality parsing" `Quick test_lowcardinality_parsing;
+  Alcotest.test_case "Enum parsing" `Quick test_enum_parsing;
+]
+
+let pool_lwt_tests = [
+  Alcotest.test_case "Pool_lwt creation" `Quick test_pool_lwt_creation;
 ]
 
 (* Main test runner *)
@@ -254,4 +292,5 @@ let () =
     "Connection", connection_tests;
     "TLS", tls_tests;
     "Columns", column_tests;
+    "Pool_lwt", pool_lwt_tests;
   ]
