@@ -98,6 +98,11 @@ let read_uint64_le_br br =
     (Int64.logand (Int64.of_int32 low) 0xFFFFFFFFL)
     (Int64.shift_left (Int64.of_int32 high) 32)
 
+let read_int64_le_br br =
+  let low = read_int32_le_br br in
+  let high = read_int32_le_br br in
+  Int64.logor (Int64.of_int32 low) (Int64.shift_left (Int64.of_int32 high) 32)
+
 let read_float64_le_br br =
   let bits = read_uint64_le_br br in
   Int64.float_of_bits bits
@@ -165,3 +170,7 @@ let read_int16_le_br br =
   if v land 0x8000 <> 0 then Int32.of_int (v - 0x10000) else Int32.of_int v
 
 let read_uint8_br br = Buffered_reader.input_byte br
+let read_int64_le ic =
+  let low = read_int32_le ic in
+  let high = read_int32_le ic in
+  Int64.logor (Int64.of_int32 low) (Int64.shift_left (Int64.of_int32 high) 32)

@@ -261,6 +261,35 @@ let rec reader_of_spec (spec:string) : (in_channel -> int -> value array) =
     let key_reader = reader_of_spec key_type in
     let value_reader = reader_of_spec value_type in
     (fun ic n -> read_n_map ic n key_reader value_reader)
+  else if starts_with ~prefix:"lowcardinality(" s then
+    let inner = String.sub s 15 (String.length s - 16) |> trim in
+    let (inner_nullable, inner_base) =
+      if starts_with ~prefix:"nullable(" inner then (true, String.sub inner 9 (String.length inner - 10) |> trim)
+      else (false, inner)
+    in
+    let dict_reader = reader_of_spec inner_base in
+    (fun ic n ->
+      let index_serialization_type = read_uint64_le ic in
+      let key_type = Int64.to_int (Int64.logand index_serialization_type 0xFFL) in
+      (* read dictionary rows *)
+      let index_rows = Binary.read_int64_le ic |> Int64.to_int in
+      let dict = if index_rows > 0 then dict_reader ic index_rows else [||] in
+      let keys_rows = Binary.read_int64_le ic |> Int64.to_int in
+      let read_key () = match key_type with
+        | 0 -> input_byte ic
+        | 1 -> Binary.read_int16_le ic |> Int32.to_int
+        | 2 -> Binary.read_int32_le ic |> Int32.to_int
+        | _ -> let v = read_uint64_le ic in Int64.to_int v
+      in
+      let res = Array.make n VNull in
+      for i = 0 to n-1 do
+        let idx = if i < keys_rows then read_key () else 0 in
+        if inner_nullable && idx = 0 then res.(i) <- VNull
+        else
+          let di = if inner_nullable then idx - 1 else idx in
+          res.(i) <- if di >= 0 && di < Array.length dict then dict.(di) else VNull
+      done;
+      res)
   else if starts_with ~prefix:"tuple(" s then
     let types = parse_tuple_types s in
     let readers = List.map reader_of_spec types in
@@ -295,22 +324,20 @@ let rec reader_of_spec (spec:string) : (in_channel -> int -> value array) =
         let v = Int32.to_int (Binary.read_int16_le ic) in
         VString (try Hashtbl.find table v with Not_found -> string_of_int v)))
   else if starts_with ~prefix:"decimal(" s then
-    (* Decimal(P,S) limited to P<=18 *)
+    (* Decimal(P,S) support for P<=18 using signed 64-bit storage *)
     let inside = String.sub s 8 (String.length s - 9) |> String.trim in
     let parts = String.split_on_char ',' inside |> List.map String.trim in
-    let scale = match parts with | [_p; s] -> int_of_string s | _ -> 0 in
+    let precision, scale = match parts with | [p;s] -> int_of_string p, int_of_string s | _ -> (18, 0) in
+    if precision > 18 then (fun _ _ -> failwith "Decimal precision > 18 not supported yet") else
     (fun ic n ->
       Array.init n (fun _ ->
-        let raw = read_uint64_le ic in
-        let sign = if Int64.compare raw 0L < 0 then -1 else 1 in
-        let abs = if sign < 0 then Int64.neg raw else raw in
+        let raw = Binary.read_int64_le ic in
+        let neg = Int64.compare raw 0L < 0 in
+        let abs = if neg then Int64.neg raw else raw in
         let s = Int64.to_string abs in
         let len = String.length s in
-        let res =
-          if scale = 0 then s
-          else if len <= scale then "0." ^ String.make (scale - len) '0' ^ s
-          else String.sub s 0 (len - scale) ^ "." ^ String.sub s (len - scale) scale in
-        VString (if sign < 0 then "-" ^ res else res)))
+        let res = if scale = 0 then s else if len <= scale then "0." ^ String.make (scale - len) '0' ^ s else String.sub s 0 (len - scale) ^ "." ^ String.sub s (len - scale) scale in
+        VString (if neg then "-" ^ res else res)))
   else if s = "ipv4" then
     (fun ic n ->
       Array.init n (fun _ ->
@@ -485,6 +512,34 @@ let rec reader_of_spec_br (spec:string) : (Buffered_reader.t -> int -> value arr
     let key_reader = reader_of_spec_br key_type in
     let value_reader = reader_of_spec_br value_type in
     (fun br n -> read_n_map_br br n key_reader value_reader)
+  else if starts_with ~prefix:"lowcardinality(" s then
+    let inner = String.sub s 15 (String.length s - 16) |> trim in
+    let (inner_nullable, inner_base) =
+      if starts_with ~prefix:"nullable(" inner then (true, String.sub inner 9 (String.length inner - 10) |> trim)
+      else (false, inner)
+    in
+    let dict_reader = reader_of_spec_br inner_base in
+    (fun br n ->
+      let index_serialization_type = read_uint64_le_br br in
+      let key_type = Int64.to_int (Int64.logand index_serialization_type 0xFFL) in
+      let index_rows = read_uint64_le_br br |> Int64.to_int in
+      let dict = if index_rows > 0 then dict_reader br index_rows else [||] in
+      let keys_rows = read_uint64_le_br br |> Int64.to_int in
+      let read_key () = match key_type with
+        | 0 -> read_uint8_br br
+        | 1 -> Binary.read_int16_le_br br |> Int32.to_int
+        | 2 -> Binary.read_int32_le_br br |> Int32.to_int
+        | _ -> read_uint64_le_br br |> Int64.to_int
+      in
+      let res = Array.make n VNull in
+      for i = 0 to n-1 do
+        let idx = if i < keys_rows then read_key () else 0 in
+        if inner_nullable && idx = 0 then res.(i) <- VNull
+        else
+          let di = if inner_nullable then idx - 1 else idx in
+          res.(i) <- if di >= 0 && di < Array.length dict then dict.(di) else VNull
+      done;
+      res)
   else if starts_with ~prefix:"tuple(" s then
     let types = parse_tuple_types s in
     let readers = List.map reader_of_spec_br types in
@@ -523,16 +578,17 @@ let rec reader_of_spec_br (spec:string) : (Buffered_reader.t -> int -> value arr
   else if starts_with ~prefix:"decimal(" s then
     let inside = String.sub s 8 (String.length s - 9) |> String.trim in
     let parts = String.split_on_char ',' inside |> List.map String.trim in
-    let scale = match parts with | [_p; s] -> int_of_string s | _ -> 0 in
+    let precision, scale = match parts with | [p;s] -> int_of_string p, int_of_string s | _ -> (18, 0) in
+    if precision > 18 then (fun _ _ -> failwith "Decimal precision > 18 not supported yet") else
     (fun br n ->
       Array.init n (fun _ ->
-        let raw = read_uint64_le_br br in
-        let sign = if Int64.compare raw 0L < 0 then -1 else 1 in
-        let abs = if sign < 0 then Int64.neg raw else raw in
+        let raw = Binary.read_int64_le_br br in
+        let neg = Int64.compare raw 0L < 0 in
+        let abs = if neg then Int64.neg raw else raw in
         let s = Int64.to_string abs in
         let len = String.length s in
         let res = if scale = 0 then s else if len <= scale then "0." ^ String.make (scale - len) '0' ^ s else String.sub s 0 (len - scale) ^ "." ^ String.sub s (len - scale) scale in
-        VString (if sign < 0 then "-" ^ res else res)))
+        VString (if neg then "-" ^ res else res)))
   else if s = "ipv4" then
     (fun br n ->
       Array.init n (fun _ ->
