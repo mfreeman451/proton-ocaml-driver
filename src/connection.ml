@@ -403,6 +403,19 @@ let receive_data t ~raw read_fn : Block.t Lwt.t =
           a.(i) <- VString s; loop (i+1)
         in
         loop 0 >|= fun () -> a
+      ) else if s = "date" then (
+        let a = Array.make n VNull in
+        let rec loop i = 
+          if i = n then Lwt.return_unit 
+          else 
+            read_byte read_fn >>= fun a_byte ->
+            read_byte read_fn >>= fun b_byte ->
+            let days = a_byte lor (b_byte lsl 8) in
+            let seconds = Int64.of_int (days * 86400) in
+            let tm = Unix.gmtime (Int64.to_float seconds) in
+            a.(i) <- VString (Printf.sprintf "%04d-%02d-%02d" (tm.tm_year+1900) (tm.tm_mon+1) tm.tm_mday);
+            loop (i+1) in
+        loop 0 >|= fun () -> a
       ) else if String.length s >= 9 && String.sub s 0 9 = "datetime64" then (
         let inside_idx = try String.index s '(' with Not_found -> -1 in
         let precision = if inside_idx >= 0 then
@@ -617,10 +630,26 @@ let receive_data t ~raw read_fn : Block.t Lwt.t =
             a.(i) <- VString (String.concat ":" (List.init 8 (fun i -> hex (2*i) ^ hex (2*i+1))));
             loop (i+1) in
         loop 0 >|= fun () -> a
-      ) else if String.length s >= 7 && String.sub s 0 7 = "decimal" then (
-        (* For now, just read as strings - proper decimal support would need parsing the precision/scale *)
+      ) else if s = "uuid" then (
         let a = Array.make n VNull in
-        let rec loop i = if i = n then Lwt.return_unit else read_str_lwt read_fn >>= fun v -> a.(i) <- VString v; loop (i+1) in
+        let rec loop i = 
+          if i = n then Lwt.return_unit 
+          else 
+            lwt_read_exact read_fn 16 >>= fun buf ->
+            let hex i = Printf.sprintf "%02x" (Char.code (Bytes.get buf i)) in
+            let part a b = String.concat "" (List.init (b-a+1) (fun k -> hex (a+k))) in
+            let uuid_str = part 0 3 ^ "-" ^ part 4 5 ^ "-" ^ part 6 7 ^ "-" ^ part 8 9 ^ "-" ^ part 10 15 in
+            a.(i) <- VString uuid_str;
+            loop (i+1) in
+        loop 0 >|= fun () -> a
+      ) else if String.length s >= 7 && String.sub s 0 7 = "decimal" then (
+        (* Decimal values are stored as integers. For Decimal(10,2) it's int64 *)
+        let a = Array.make n VNull in
+        let rec loop i = 
+          if i = n then Lwt.return_unit 
+          else read_uint64_le_lwt read_fn >>= fun v ->
+            a.(i) <- VInt64 v;
+            loop (i+1) in
         loop 0 >|= fun () -> a
       ) else Lwt.fail (Failure (Printf.sprintf "Unsupported column type in async: %s" type_spec))
     in
