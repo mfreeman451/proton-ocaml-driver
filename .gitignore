@@ -38,3 +38,6 @@ _opam/
 .claude
 proton-python-driver
 proton-rust-client
+proton-go-driver
+
+.vscode
