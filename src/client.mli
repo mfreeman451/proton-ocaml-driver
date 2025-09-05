@@ -20,3 +20,14 @@ val disconnect : t -> unit Lwt.t
 
 (** [execute client query] executes a query and returns the result *)
 val execute : t -> string -> query_result Lwt.t
+
+(** Async insert functionality *)
+
+(** [create_async_inserter ?config client table_name] creates a new async inserter *)
+val create_async_inserter : ?config:Async_insert.config option -> t -> string -> Async_insert.t
+
+(** [insert_rows client table_name ?columns rows] inserts multiple rows into a table *)
+val insert_rows : t -> string -> ?columns:(string * string) list -> Columns.value list list -> unit Lwt.t
+
+(** [insert_row client table_name ?columns row] inserts a single row into a table *)
+val insert_row : t -> string -> ?columns:(string * string) list -> Columns.value list -> unit Lwt.t
