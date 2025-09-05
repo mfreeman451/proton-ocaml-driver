@@ -1,7 +1,6 @@
 (* Main test suite for Proton OCaml driver - Lwt/Async version *)
 
 open Proton
-open Lwt.Infix
 
 (* CityHash tests - still synchronous *)
 let test_cityhash_consistency () =
