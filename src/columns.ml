@@ -1,42 +1,6 @@
 open Binary
 open Varint
-
-type value =
-  | VNull
-  | VString of string
-  | VInt32  of int32
-  | VInt64  of int64
-  | VUInt32 of int32   (* we'll keep as signed carrier *)
-  | VUInt64 of int64   (* ditto *)
-  | VFloat64 of float
-  | VDateTime of int64 * string option  (* Unix timestamp, timezone *)
-  | VDateTime64 of int64 * int * string option  (* value, precision, timezone *)
-  | VArray of value list  (* Array of values *)
-  | VMap of (value * value) list  (* Map of key-value pairs *)
-  | VTuple of value list  (* Tuple values *)
-
-let rec value_to_string = function
-  | VNull -> "NULL"
-  | VString s -> s
-  | VInt32 i -> Int32.to_string i
-  | VUInt32 i -> Int32.to_string i
-  | VInt64 i -> Int64.to_string i
-  | VUInt64 i -> Int64.to_string i
-  | VFloat64 f -> string_of_float f
-  | VDateTime (ts, tz) -> 
-      let tz_str = match tz with Some z -> " " ^ z | None -> "" in
-      Printf.sprintf "%Ld%s" ts tz_str
-  | VDateTime64 (value, precision, tz) ->
-      let tz_str = match tz with Some z -> " " ^ z | None -> "" in
-      Printf.sprintf "%Ld(p=%d)%s" value precision tz_str
-  | VArray values ->
-      let elements = List.map value_to_string values in
-      "[" ^ String.concat "," elements ^ "]"
-  | VMap pairs ->
-      let pair_strs = List.map (fun (k, v) -> 
-        value_to_string k ^ ":" ^ value_to_string v) pairs in
-      "{" ^ String.concat "," pair_strs ^ "}"
-  | VTuple vs -> "(" ^ String.concat "," (List.map value_to_string vs) ^ ")"
+include Columns_types
 
 (* reading helpers for simple types *)
 let read_n_int32 ic n =

@@ -461,6 +461,73 @@ let receive_data t ~raw read_fn : Block.t Lwt.t =
         read_nulls_map n >>= fun nulls ->
         read_values inner n >|= fun vals ->
         for i = 0 to n-1 do if nulls.(i) then vals.(i) <- VNull done; vals
+      ) else if String.length s >= 6 && String.sub s 0 6 = "enum8(" then (
+        (* parse mapping *)
+        let inside = String.sub s 6 (String.length s - 7) in
+        let pairs = String.split_on_char ',' inside |> List.filter (fun x -> String.trim x <> "") in
+        let tbl = Hashtbl.create 16 in
+        List.iter (fun p -> match String.split_on_char '=' p with
+          | [name; v] ->
+              let name = String.trim name in
+              let name = if String.length name >= 2 && name.[0] = '\'' then String.sub name 1 (String.length name - 2) else name in
+              let v = int_of_string (String.trim v) in Hashtbl.add tbl v name
+          | _ -> ()) pairs;
+        let a = Array.make n VNull in
+        let rec loop i =
+          if i = n then Lwt.return_unit else
+          read_byte read_fn >>= fun b ->
+          let v = if b > 127 then b - 256 else b in
+          let s = try Hashtbl.find tbl v with Not_found -> string_of_int v in
+          a.(i) <- VString s; loop (i+1)
+        in
+        loop 0 >|= fun () -> a
+      ) else if String.length s >= 7 && String.sub s 0 7 = "enum16(" then (
+        let inside = String.sub s 7 (String.length s - 8) in
+        let pairs = String.split_on_char ',' inside |> List.filter (fun x -> String.trim x <> "") in
+        let tbl = Hashtbl.create 32 in
+        List.iter (fun p -> match String.split_on_char '=' p with
+          | [name; v] ->
+              let name = String.trim name in
+              let name = if String.length name >= 2 && name.[0] = '\'' then String.sub name 1 (String.length name - 2) else name in
+              let v = int_of_string (String.trim v) in Hashtbl.add tbl v name
+          | _ -> ()) pairs;
+        let a = Array.make n VNull in
+        let rec loop i =
+          if i = n then Lwt.return_unit else
+          read_int32_le_lwt read_fn >>= fun v32 ->
+          let v = Int32.to_int v32 in
+          let s = try Hashtbl.find tbl v with Not_found -> string_of_int v in
+          a.(i) <- VString s; loop (i+1)
+        in
+        loop 0 >|= fun () -> a
+      ) else if String.length s >= 15 && String.sub s 0 15 = "lowcardinality(" then (
+        let inner = String.sub s 15 (String.length s - 16) |> String.trim in
+        let inner_nullable, inner_base =
+          if String.length inner >= 9 && String.sub inner 0 9 = "nullable(" then true, (String.sub inner 9 (String.length inner - 10) |> String.trim) else false, inner in
+        read_uint64_le_lwt read_fn >>= fun index_ser ->
+        let key_type = Int64.to_int (Int64.logand index_ser 0xFFL) in
+        read_uint64_le_lwt read_fn >>= fun index_rows64 ->
+        let index_rows = Int64.to_int index_rows64 in
+        let rec read_dict acc m = if m = 0 then Lwt.return (List.rev acc) else read_values inner_base 1 >>= fun arr -> read_dict (arr.(0)::acc) (m-1) in
+        read_dict [] index_rows >>= fun dict_list ->
+        let dict = Array.of_list dict_list in
+        read_uint64_le_lwt read_fn >>= fun keys_rows64 ->
+        let keys_rows = Int64.to_int keys_rows64 in
+        let read_key () = match key_type with
+          | 0 -> read_byte read_fn >|= fun b -> b
+          | 1 -> read_int32_le_lwt read_fn >|= fun v -> Int32.to_int v
+          | 2 -> read_int32_le_lwt read_fn >|= fun v -> Int32.to_int v
+          | _ -> read_uint64_le_lwt read_fn >|= fun v -> Int64.to_int v in
+        let res = Array.make n VNull in
+        let rec loop i =
+          if i = n then Lwt.return_unit else
+          (if i < keys_rows then read_key () else Lwt.return 0) >>= fun idx ->
+          if inner_nullable && idx = 0 then (res.(i) <- VNull; loop (i+1)) else
+          let di = if inner_nullable then idx - 1 else idx in
+          let v = if di >= 0 && di < Array.length dict then dict.(di) else VNull in
+          res.(i) <- v; loop (i+1)
+        in
+        loop 0 >|= fun () -> res
       ) else if String.length s >= 6 && String.sub s 0 6 = "array(" then (
         let start = 6 in
         let endp = String.rindex s ')' in
