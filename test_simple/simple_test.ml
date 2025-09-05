@@ -26,11 +26,11 @@ let test_basic () =
   | e -> Printf.printf "✗ DateTime parser failed: %s\n" (Printexc.to_string e));
   
   (* Test value formatting *)
-  let tuple_value = Columns_types.VTuple [
-    Columns_types.VString "hello";
-    Columns_types.VInt32 42l
+  let tuple_value = Columns.VTuple [
+    Columns.VString "hello";
+    Columns.VInt32 42l
   ] in
-  let tuple_str = Columns_types.value_to_string tuple_value in
+  let tuple_str = Columns.value_to_string tuple_value in
   Printf.printf "✓ Tuple formatting: %s\n" tuple_str;
   
   print_endline "✅ All basic tests passed!"
