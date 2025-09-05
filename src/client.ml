@@ -47,6 +47,139 @@ let execute c (query:string) : query_result Lwt.t =
       in
       Rows (rows, columns)
 
+(* Streaming query functionality *)
+
+(* Streaming rows type similar to Go driver *)
+type rows = {
+  mutable current_block: Block.t option;
+  mutable current_row: int;
+  mutable columns_info: (string * string) list;
+  connection: Connection.t;
+  mutable finished: bool;
+  mutable error: exn option;
+}
+
+(* Go-driver style streaming interface *)
+let query_stream c (query:string) : rows Lwt.t =
+  Connection.send_query c.conn query >>= fun () ->
+  let rec get_first_block () =
+    Connection.receive_packet c.conn >>= function
+    | PEndOfStream -> 
+        Lwt.return {
+          current_block = None;
+          current_row = 0;
+          columns_info = [];
+          connection = c.conn;
+          finished = true;
+          error = None;
+        }
+    | PData b ->
+        if b.n_rows = 0 then
+          (* Header block with column definitions *)
+          let columns = Block.columns_with_types b in
+          get_first_block () >|= fun next_rows ->
+          { next_rows with columns_info = columns }
+        else
+          (* First data block *)
+          let columns = Block.columns_with_types b in
+          Lwt.return {
+            current_block = Some b;
+            current_row = 0;
+            columns_info = columns;
+            connection = c.conn;
+            finished = false;
+            error = None;
+          }
+    | PTotals b ->
+        (* Handle totals block *)
+        let columns = Block.columns_with_types b in
+        Lwt.return {
+          current_block = Some b;
+          current_row = 0;
+          columns_info = columns;
+          connection = c.conn;
+          finished = false;
+          error = None;
+        }
+    | PExtremes _ | PLog _ | PProgress | PProfileInfo -> 
+        get_first_block () (* Skip metadata packets *)
+  in
+  get_first_block ()
+
+let next_row (rows: rows) : bool Lwt.t =
+  if rows.finished || rows.error <> None then
+    Lwt.return false
+  else
+    match rows.current_block with
+    | None -> Lwt.return false
+    | Some block ->
+        if rows.current_row >= block.n_rows then
+          (* Need to get next block *)
+          let rec get_next_block () =
+            Lwt.catch
+              (fun () ->
+                Connection.receive_packet rows.connection >>= function
+                | PEndOfStream -> 
+                    rows.finished <- true;
+                    Lwt.return false
+                | PData b when b.n_rows = 0 ->
+                    (* Update column info from header block *)
+                    let new_columns = Block.columns_with_types b in
+                    if new_columns <> [] then rows.columns_info <- new_columns;
+                    get_next_block ()
+                | PData b ->
+                    rows.current_block <- Some b;
+                    rows.current_row <- 0;
+                    Lwt.return true
+                | PTotals b when b.n_rows > 0 ->
+                    rows.current_block <- Some b;
+                    rows.current_row <- 0;
+                    Lwt.return true
+                | PExtremes _ | PLog _ | PProgress | PProfileInfo | PTotals _ -> 
+                    get_next_block () (* Skip metadata packets *))
+              (fun exn ->
+                rows.error <- Some exn;
+                Lwt.return false)
+          in
+          get_next_block ()
+        else
+          (* More rows in current block *)
+          Lwt.return true
+
+let scan_row (rows: rows) : Columns.value list Lwt.t =
+  match rows.current_block with
+  | None -> Lwt.fail (Failure "No current block to scan")
+  | Some block ->
+      if rows.current_row >= block.n_rows then
+        Lwt.fail (Failure "Current row index out of bounds")
+      else
+        let block_rows = Block.get_rows block in
+        let row = List.nth block_rows rows.current_row in
+        rows.current_row <- rows.current_row + 1;
+        Lwt.return row
+
+let close_rows (rows: rows) : unit Lwt.t =
+  (* Drain any remaining packets *)
+  let rec drain () =
+    if rows.finished then
+      Lwt.return_unit
+    else
+      Lwt.catch
+        (fun () ->
+          Connection.receive_packet rows.connection >>= function
+          | PEndOfStream -> 
+              rows.finished <- true;
+              Lwt.return_unit
+          | _ -> drain ())
+        (fun exn ->
+          rows.error <- Some exn;
+          Lwt.return_unit)
+  in
+  drain ()
+
+let columns (rows: rows) : (string * string) list =
+  rows.columns_info
+
 (* Async insert functionality *)
 let create_async_inserter ?(config=None) c table_name =
   let final_config = match config with

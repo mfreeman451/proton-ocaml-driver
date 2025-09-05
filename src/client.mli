@@ -21,6 +21,26 @@ val disconnect : t -> unit Lwt.t
 (** [execute client query] executes a query and returns the result *)
 val execute : t -> string -> query_result Lwt.t
 
+(** Streaming query functionality *)
+
+(** Streaming result set for row-by-row processing *)
+type rows
+
+(** [query_stream client query] executes a query and returns a streaming rows object *)
+val query_stream : t -> string -> rows Lwt.t
+
+(** [next_row rows] advances to the next row, returns false when no more rows *)
+val next_row : rows -> bool Lwt.t
+
+(** [scan_row rows] scans the current row into a list of values *)
+val scan_row : rows -> Columns.value list Lwt.t
+
+(** [close_rows rows] closes the streaming result set and frees resources *)
+val close_rows : rows -> unit Lwt.t
+
+(** [columns rows] returns the column names and types *)
+val columns : rows -> (string * string) list
+
 (** Async insert functionality *)
 
 (** [create_async_inserter ?config client table_name] creates a new async inserter *)
