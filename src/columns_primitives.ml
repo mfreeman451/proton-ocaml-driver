@@ -55,7 +55,7 @@ let reader_primitive_of_spec (s:string)
         let b = read_uint8 ic in
         let v = if b > 127 then b - 256 else b in
         let s = try Hashtbl.find tbl v with Not_found -> string_of_int v in
-        VString s))
+        VEnum8 (s, v)))
   | _ when String.length s >= 7 && String.sub s 0 7 = "enum16(" ->
       (* Parse enum16 mapping *)
       let inside = String.sub s 7 (String.length s - 8) in
@@ -71,7 +71,7 @@ let reader_primitive_of_spec (s:string)
         let v32 = read_int32_le ic in
         let v = Int32.to_int v32 in
         let s = try Hashtbl.find tbl v with Not_found -> string_of_int v in
-        VString s))
+        VEnum16 (s, v)))
   | _ when String.length s >= 7 && String.sub s 0 7 = "decimal" ->
       (* Decimal values are stored as integers. For Decimal(10,2) it's int64 *)
       Some (fun ic n -> Array.init n (fun _ -> VInt64 (read_uint64_le ic)))
@@ -131,7 +131,7 @@ let reader_primitive_of_spec_br (s:string)
         let b = read_uint8_br br in
         let v = if b > 127 then b - 256 else b in
         let s = try Hashtbl.find tbl v with Not_found -> string_of_int v in
-        VString s))
+        VEnum8 (s, v)))
   | _ when String.length s >= 7 && String.sub s 0 7 = "enum16(" ->
       (* Parse enum16 mapping *)
       let inside = String.sub s 7 (String.length s - 8) in
@@ -147,7 +147,7 @@ let reader_primitive_of_spec_br (s:string)
         let v32 = read_int32_le_br br in
         let v = Int32.to_int v32 in
         let s = try Hashtbl.find tbl v with Not_found -> string_of_int v in
-        VString s))
+        VEnum16 (s, v)))
   | _ when String.length s >= 7 && String.sub s 0 7 = "decimal" ->
       (* Decimal values are stored as integers. For Decimal(10,2) it's int64 *)
       Some (fun br n -> Array.init n (fun _ -> VInt64 (read_uint64_le_br br)))

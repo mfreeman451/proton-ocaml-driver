@@ -30,9 +30,12 @@ let build_uncompressed_block ~cols =
       | s when String.length s >= 12 && String.sub s 0 12 = "fixedstring(" ->
           Buffer.add_string buf "abc"; Buffer.add_char buf '\x00'
       | s when String.length s >= 6 && String.sub s 0 6 = "enum8(" ->
-          Buffer.add_char buf (Char.chr 1)
+          (* Write sequential enum values 1, 2, 3... for each row *)
+          Buffer.add_char buf (Char.chr _i)
       | s when String.length s >= 7 && String.sub s 0 7 = "enum16(" ->
-          Buffer.add_string buf "\x01\x00"
+          (* Write sequential enum16 values 100, 200... for each row as int32 LE *)
+          let v = _i * 100 in
+          Buffer.add_string buf (Bytes.to_string (Bytes.init 4 (fun j -> Char.chr ((v lsr (8*j)) land 0xFF))))
       | "int32" | "uint32" -> writeln_int32 42
       | "int64" | "uint64" -> writeln_int64 42L
       | "float64" -> Buffer.add_string buf (Bytes.to_string (Bytes.make 8 '\x00'))
@@ -537,6 +540,138 @@ let test_empty_map_formatting () =
   let expected = "{}" in
   Alcotest.(check string) "Empty map formatting" expected map_str
 
+(* Enum tests *)
+let test_enum8_parsing () =
+  let cols = [ ("status", "Enum8('active'=1,'inactive'=2,'pending'=3)", 3) ] in
+  let bs = build_uncompressed_block ~cols in
+  let pos = ref 0 in
+  let read_fn buf off len = 
+    let rem = Bytes.length bs - !pos in 
+    let n = min len rem in 
+    Bytes.blit bs !pos buf off n; 
+    pos := !pos + n; 
+    Lwt.return n 
+  in
+  let t = Connection.create ~compression:Compress.None () in
+  t.Connection.srv <- Some { 
+    Context.name=""; 
+    version_major=0; 
+    version_minor=0; 
+    version_patch=0; 
+    revision=Defines.dbms_min_revision_with_block_info; 
+    timezone=None; 
+    display_name="" 
+  };
+  match Lwt_main.run (Connection.receive_data t ~raw:true read_fn) with
+  | { Block.n_rows=3; columns=[c]; _ } ->
+      Alcotest.(check string) "Enum8 type" "Enum8('active'=1,'inactive'=2,'pending'=3)" c.Block.type_spec;
+      (match c.Block.data with
+      | [| Columns.VEnum8 ("active", 1); Columns.VEnum8 ("inactive", 2); Columns.VEnum8 ("pending", 3) |] -> ()
+      | _ -> Alcotest.fail "Expected VEnum8 values")
+  | _ -> Alcotest.fail "Unexpected block structure"
+
+let test_enum16_parsing () =
+  let cols = [ ("priority", "Enum16('low'=100,'normal'=200,'high'=300)", 2) ] in
+  let bs = build_uncompressed_block ~cols in
+  let pos = ref 0 in
+  let read_fn buf off len = 
+    let rem = Bytes.length bs - !pos in 
+    let n = min len rem in 
+    Bytes.blit bs !pos buf off n; 
+    pos := !pos + n; 
+    Lwt.return n 
+  in
+  let t = Connection.create ~compression:Compress.None () in
+  t.Connection.srv <- Some { 
+    Context.name=""; 
+    version_major=0; 
+    version_minor=0; 
+    version_patch=0; 
+    revision=Defines.dbms_min_revision_with_block_info; 
+    timezone=None; 
+    display_name="" 
+  };
+  match Lwt_main.run (Connection.receive_data t ~raw:true read_fn) with
+  | { Block.n_rows=2; columns=[c]; _ } ->
+      Alcotest.(check string) "Enum16 type" "Enum16('low'=100,'normal'=200,'high'=300)" c.Block.type_spec;
+      (match c.Block.data with
+      | [| Columns.VEnum16 ("low", 100); Columns.VEnum16 ("normal", 200) |] -> ()
+      | _ -> Alcotest.fail "Expected VEnum16 values")
+  | _ -> Alcotest.fail "Unexpected block structure"
+
+let test_enum8_negative () =
+  (* Test enum with negative value (-1) *)
+  (* Create custom test data with -1 value (0xFF byte) *)
+  let buf = Buffer.create 128 in
+  write_varint buf 0; (* BlockInfo terminator *)
+  write_varint buf 1; (* n_columns *)
+  write_varint buf 1; (* n_rows *)
+  write_str buf "flag";
+  write_str buf "Enum8('off'=-1,'on'=1)";
+  Buffer.add_char buf '\xFF'; (* -1 as signed byte *)
+  let bs = Buffer.contents buf |> Bytes.of_string in
+  let pos = ref 0 in
+  let read_fn buf off len = 
+    let rem = Bytes.length bs - !pos in 
+    let n = min len rem in 
+    Bytes.blit bs !pos buf off n; 
+    pos := !pos + n; 
+    Lwt.return n 
+  in
+  let t = Connection.create ~compression:Compress.None () in
+  t.Connection.srv <- Some { 
+    Context.name=""; 
+    version_major=0; 
+    version_minor=0; 
+    version_patch=0; 
+    revision=Defines.dbms_min_revision_with_block_info; 
+    timezone=None; 
+    display_name="" 
+  };
+  match Lwt_main.run (Connection.receive_data t ~raw:true read_fn) with
+  | { Block.n_rows=1; columns=[c]; _ } ->
+      (match c.Block.data with
+      | [| Columns.VEnum8 ("off", -1) |] -> ()
+      | _ -> Alcotest.fail "Expected VEnum8 with negative value")
+  | _ -> Alcotest.fail "Unexpected block structure"
+
+
+let test_enum_value_formatting () =
+  let enum8_val = Columns.VEnum8 ("active", 1) in
+  let enum16_val = Columns.VEnum16 ("high", 300) in
+  Alcotest.(check string) "Enum8 string format" "active" (Columns.value_to_string enum8_val);
+  Alcotest.(check string) "Enum16 string format" "high" (Columns.value_to_string enum16_val)
+
+let test_enum_unknown_values () =
+  (* Test how enum handles unknown values (should show numeric value) *)
+  let cols = [ ("status", "Enum8('known'=1)", 1) ] in
+  let bs = build_uncompressed_block ~cols in
+  let pos = ref 0 in
+  let read_fn buf off len = 
+    let rem = Bytes.length bs - !pos in 
+    let n = min len rem in 
+    Bytes.blit bs !pos buf off n; 
+    pos := !pos + n; 
+    Lwt.return n 
+  in
+  let t = Connection.create ~compression:Compress.None () in
+  t.Connection.srv <- Some { 
+    Context.name=""; 
+    version_major=0; 
+    version_minor=0; 
+    version_patch=0; 
+    revision=Defines.dbms_min_revision_with_block_info; 
+    timezone=None; 
+    display_name="" 
+  };
+  (* The test data generator puts value 1 which should map to 'known' *)
+  match Lwt_main.run (Connection.receive_data t ~raw:true read_fn) with
+  | { Block.n_rows=1; columns=[c]; _ } ->
+      (match c.Block.data with
+      | [| Columns.VEnum8 ("known", 1) |] -> ()
+      | _ -> Alcotest.fail "Expected known enum value")
+  | _ -> Alcotest.fail "Unexpected block structure"
+
 let () =
   Alcotest.run "Proton Lwt" [
     ("async", [
@@ -593,5 +728,12 @@ let () =
       Alcotest.test_case "Nested map parsing" `Quick test_nested_map_parsing;
       Alcotest.test_case "Map value formatting" `Quick test_map_value_formatting;
       Alcotest.test_case "Empty map formatting" `Quick test_empty_map_formatting;
+    ]);
+    ("Enum", [
+      Alcotest.test_case "Enum8 parsing and value types" `Quick test_enum8_parsing;
+      Alcotest.test_case "Enum16 parsing and value types" `Quick test_enum16_parsing;
+      Alcotest.test_case "Enum8 with negative values" `Quick test_enum8_negative;
+      Alcotest.test_case "Enum value formatting" `Quick test_enum_value_formatting;
+      Alcotest.test_case "Enum unknown value handling" `Quick test_enum_unknown_values;
     ]);
   ]
