@@ -5,3 +5,7 @@
 (executable
  (name compression_example)
  (libraries proton lwt.unix))
+
+(executable
+ (name tls_example)
+ (libraries proton lwt lwt.unix))
