@@ -1,0 +1,8 @@
+(version 1)
+
+(build
+ (run pkg-config liblz4))
+
+(depends conf-pkg-config)
+
+(depexts lz4)
