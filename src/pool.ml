@@ -51,7 +51,7 @@ let cleanup_expired_connections pool =
   
   Queue.iter (fun pooled_conn ->
     if is_connection_expired pooled_conn now pool.config then (
-      Connection.disconnect pooled_conn.conn;
+      (try Lwt_main.run (Connection.disconnect pooled_conn.conn) with _ -> ());
       incr expired_count;
       pool.total_count <- pool.total_count - 1
     ) else (
@@ -108,13 +108,13 @@ let return_connection pool conn =
       Queue.add pooled_conn pool.idle_connections
     ) else (
       (* Close excess connections *)
-      Connection.disconnect conn;
+      (try Lwt_main.run (Connection.disconnect conn) with _ -> ());
       pool.total_count <- pool.total_count - 1
     )
   with
   | exn -> 
     (* Ensure we always decrement active count *)
-    Connection.disconnect conn;
+    (try Lwt_main.run (Connection.disconnect conn) with _ -> ());
     pool.total_count <- pool.total_count - 1;
     Printf.eprintf "Error returning connection to pool: %s\n" (Printexc.to_string exn)
   );
@@ -124,7 +124,7 @@ let close_pool pool =
   Mutex.lock pool.mutex;
   (try
     Queue.iter (fun pooled_conn ->
-      Connection.disconnect pooled_conn.conn
+      (try Lwt_main.run (Connection.disconnect pooled_conn.conn) with _ -> ())
     ) pool.idle_connections;
     Queue.clear pool.idle_connections;
     pool.total_count <- 0;
