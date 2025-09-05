@@ -721,6 +721,81 @@ let test_enum_unknown_values () =
       | _ -> Alcotest.fail "Expected known enum value")
   | _ -> Alcotest.fail "Unexpected block structure"
 
+(* Async insert tests *)
+open Lwt.Infix
+
+let test_async_inserter_creation () =
+  let conn = Connection.create ~compression:Compress.None () in
+  let config = Async_insert.default_config "test_table" in
+  let inserter = Async_insert.create config conn in
+  
+  Alcotest.(check string) "Table name" "test_table" config.table_name;
+  Alcotest.(check int) "Default batch size" 1000 config.max_batch_size;
+  Alcotest.(check int) "Default max bytes" 1_048_576 config.max_batch_bytes;
+  
+  let (row_count, byte_size) = Lwt_main.run (Async_insert.get_stats inserter) in
+  Alcotest.(check int) "Initial row count" 0 row_count;
+  Alcotest.(check int) "Initial byte size" 0 byte_size
+
+let test_buffer_management () =
+  let conn = Connection.create ~compression:Compress.None () in
+  let config = Async_insert.default_config "test_table" in
+  let inserter = Async_insert.create config conn in
+  
+  let test_row = [Columns.VString "test"; Columns.VInt32 42l] in
+  let columns = [("name", "String"); ("value", "Int32")] in
+  
+  Lwt_main.run (
+    Async_insert.add_row ~columns inserter test_row >>= fun () ->
+    Async_insert.get_stats inserter >>= fun (row_count, byte_size) ->
+    
+    Alcotest.(check int) "Row count after insert" 1 row_count;
+    Alcotest.(check bool) "Byte size increased" true (byte_size > 0);
+    Lwt.return_unit
+  )
+
+let test_batch_size_limits () =
+  let conn = Connection.create ~compression:Compress.None () in
+  let config = { (Async_insert.default_config "test_table") with 
+    max_batch_size = 2; 
+    max_batch_bytes = 1000 
+  } in
+  let inserter = Async_insert.create config conn in
+  
+  let test_rows = [
+    [Columns.VString "test1"; Columns.VInt32 1l];
+    [Columns.VString "test2"; Columns.VInt32 2l];
+  ] in
+  let columns = [("name", "String"); ("value", "Int32")] in
+  
+  Lwt_main.run (
+    Async_insert.add_rows ~columns inserter test_rows >>= fun () ->
+    Async_insert.get_stats inserter >>= fun (row_count, _) ->
+    
+    Alcotest.(check int) "Row count at limit" 2 row_count;
+    Lwt.return_unit
+  )
+
+let test_row_estimation () =
+  let conn = Connection.create ~compression:Compress.None () in
+  let config = Async_insert.default_config "test_table" in
+  let inserter = Async_insert.create config conn in
+  
+  let small_row = [Columns.VString "a"; Columns.VInt32 1l] in
+  let large_row = [Columns.VString (String.make 100 'a'); Columns.VInt64 1L] in
+  
+  Lwt_main.run (
+    Async_insert.add_row inserter small_row >>= fun () ->
+    Async_insert.get_stats inserter >>= fun (_, small_size) ->
+    
+    Async_insert.add_row inserter large_row >>= fun () ->
+    Async_insert.get_stats inserter >>= fun (_, total_size) ->
+    
+    let large_row_size = total_size - small_size in
+    Alcotest.(check bool) "Large row bigger" true (large_row_size > small_size);
+    Lwt.return_unit
+  )
+
 let () =
   Alcotest.run "Proton Lwt" [
     ("async", [
@@ -787,5 +862,11 @@ let () =
       Alcotest.test_case "Enum8 with negative values" `Quick test_enum8_negative;
       Alcotest.test_case "Enum value formatting" `Quick test_enum_value_formatting;
       Alcotest.test_case "Enum unknown value handling" `Quick test_enum_unknown_values;
+    ]);
+    ("Async_insert", [
+      Alcotest.test_case "Async inserter creation" `Quick test_async_inserter_creation;
+      Alcotest.test_case "Buffer management" `Quick test_buffer_management;
+      Alcotest.test_case "Batch size limits" `Quick test_batch_size_limits;
+      Alcotest.test_case "Row estimation" `Quick test_row_estimation;
     ]);
   ]

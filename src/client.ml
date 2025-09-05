@@ -46,3 +46,20 @@ let execute c (query:string) : query_result Lwt.t =
         | [] -> []
       in
       Rows (rows, columns)
+
+(* Async insert functionality *)
+let create_async_inserter ?(config=None) c table_name =
+  let final_config = match config with
+    | None -> Async_insert.default_config table_name
+    | Some cfg -> cfg
+  in
+  Async_insert.create final_config c.conn
+
+let insert_rows c table_name ?(columns=[]) rows =
+  let inserter = create_async_inserter c table_name in
+  Async_insert.start inserter;
+  Async_insert.add_rows ~columns inserter rows >>= fun () ->
+  Async_insert.stop inserter
+
+let insert_row c table_name ?(columns=[]) row =
+  insert_rows c table_name ~columns [row]
