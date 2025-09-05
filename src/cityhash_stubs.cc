@@ -217,7 +217,7 @@ static uint128 CityHash128(const char *s, size_t len) {
 // OCaml interface
 extern "C" {
 
-value cityhash128_stub(value v_data) {
+CAMLprim value cityhash128_stub(value v_data) {
   CAMLparam1(v_data);
   CAMLlocal1(v_result);
   
