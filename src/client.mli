@@ -16,7 +16,7 @@ val create : ?host:string -> ?port:int -> ?database:string -> ?user:string ->
              unit -> t
 
 (** [disconnect client] disconnects the client *)
-val disconnect : t -> unit
+val disconnect : t -> unit Lwt.t
 
 (** [execute client query] executes a query and returns the result *)
-val execute : t -> string -> query_result
+val execute : t -> string -> query_result Lwt.t

@@ -43,21 +43,7 @@ let create_from_bytes (src:bytes) =
     fill_func;
   }
 
-(* Create a buffered reader from an SSL socket *)
-let create_from_ssl (sock:Ssl.socket) =
-  let fill_func buf offset len =
-    try Ssl.Runtime_lock.read sock buf offset len
-    with
-    | Ssl.Read_error Ssl.Error_zero_return -> 0
-    | End_of_file -> 0
-  in
-  {
-    buffer = Bytes.create 8192;
-    pos = 0;
-    valid = 0;
-    eof = false;
-    fill_func;
-  }
+(* Note: TLS is handled in async path. For parsing bytes, use create_from_bytes. *)
 
 (* Fill buffer with more data *)
 let fill_buffer br =

@@ -13,4 +13,3 @@ module Client = Client
 module Cityhash = Cityhash
 module Compress = Compress
 module Buffered_reader = Buffered_reader
-module Pool = Pool
