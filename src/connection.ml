@@ -352,11 +352,184 @@ let receive_data t ~raw read_fn : Block.t Lwt.t =
         let a = Array.make n VNull in
         let rec loop i = if i = n then Lwt.return_unit else read_float64_le_lwt read_fn >>= fun v -> a.(i) <- VFloat64 v; loop (i+1) in
         loop 0 >|= fun () -> a
+      ) else if s = "bool" then (
+        let a = Array.make n VNull in
+        let rec loop i = if i = n then Lwt.return_unit else read_int32_le_lwt read_fn >>= fun v -> a.(i) <- VUInt32 v; loop (i+1) in
+        loop 0 >|= fun () -> a
+      ) else if String.length s >= 12 && String.sub s 0 12 = "fixedstring(" then (
+        let inside = String.sub s 12 (String.length s - 13) |> String.trim in
+        let len = int_of_string inside in
+        let a = Array.make n VNull in
+        let rec loop i =
+          if i = n then Lwt.return_unit else
+          lwt_read_exact read_fn len >>= fun buf ->
+          let rec rstrip j = if j > 0 && Bytes.get buf (j-1) = Char.chr 0 then rstrip (j-1) else j in
+          let l = rstrip len in
+          a.(i) <- VString (Bytes.sub_string buf 0 l); loop (i+1)
+        in
+        loop 0 >|= fun () -> a
+      ) else if s = "uuid" then (
+        let a = Array.make n VNull in
+        let rec loop i =
+          if i = n then Lwt.return_unit else
+          lwt_read_exact read_fn 16 >>= fun b ->
+          let hex i = Printf.sprintf "%02x" (Char.code (Bytes.get b i)) in
+          let part a b = String.concat "" (List.init (b-a+1) (fun k -> hex (a+k))) in
+          let s = part 0 3 ^ part 4 5 ^ part 6 7 ^ "-" ^ part 8 9 ^ "-" ^ part 10 11 ^ "-" ^ part 12 13 ^ "-" ^ part 14 15 in
+          a.(i) <- VString s; loop (i+1)
+        in
+        loop 0 >|= fun () -> a
+      ) else if s = "date" then (
+        let a = Array.make n VNull in
+        let rec loop i =
+          if i = n then Lwt.return_unit else
+          read_byte read_fn >>= fun a1 -> read_byte read_fn >>= fun b1 ->
+          let days = a1 lor (b1 lsl 8) in
+          let seconds = Int64.of_int (days * 86400) in
+          let tm = Unix.gmtime (Int64.to_float seconds) in
+          let s = Printf.sprintf "%04d-%02d-%02d" (tm.tm_year+1900) (tm.tm_mon+1) tm.tm_mday in
+          a.(i) <- VString s; loop (i+1)
+        in
+        loop 0 >|= fun () -> a
+      ) else if s = "date32" then (
+        let a = Array.make n VNull in
+        let rec loop i =
+          if i = n then Lwt.return_unit else
+          read_int32_le_lwt read_fn >>= fun d ->
+          let days = Int32.to_int d in
+          let seconds = Int64.of_int (days * 86400) in
+          let tm = Unix.gmtime (Int64.to_float seconds) in
+          let s = Printf.sprintf "%04d-%02d-%02d" (tm.tm_year+1900) (tm.tm_mon+1) tm.tm_mday in
+          a.(i) <- VString s; loop (i+1)
+        in
+        loop 0 >|= fun () -> a
+      ) else if String.length s >= 9 && String.sub s 0 9 = "datetime64" then (
+        let inside_idx = try String.index s '(' with Not_found -> -1 in
+        let precision = if inside_idx >= 0 then
+            try int_of_string (String.trim (String.sub s (inside_idx+1) (try (String.index_from s (inside_idx+1) ')') - inside_idx - 1 with Not_found -> 1))) with _ -> 3
+          else 3 in
+        let a = Array.make n VNull in
+        let rec loop i = if i = n then Lwt.return_unit else read_uint64_le_lwt read_fn >>= fun v -> a.(i) <- VDateTime64 (v, precision, None); loop (i+1) in
+        loop 0 >|= fun () -> a
+      ) else if String.length s >= 8 && String.sub s 0 8 = "datetime" then (
+        let a = Array.make n VNull in
+        let rec loop i = if i = n then Lwt.return_unit else read_uint64_le_lwt read_fn >>= fun v -> a.(i) <- VDateTime (v, None); loop (i+1) in
+        loop 0 >|= fun () -> a
+      ) else if String.length s >= 6 && String.sub s 0 6 = "array(" then (
+        let start = 6 in
+        let endp = String.rindex s ')' in
+        let inner = String.sub s start (endp - start) |> String.trim in
+        (let arr = Array.make n 0L in
+         let rec loop i = if i = n then Lwt.return arr else read_uint64_le_lwt read_fn >>= fun v -> arr.(i) <- v; loop (i+1) in
+         loop 0) >>= fun offsets ->
+        let total = if n = 0 then 0 else Int64.to_int offsets.(n-1) in
+        read_values inner total >>= fun all_elems ->
+        let res = Array.make n (VArray []) in
+        let start_idx = ref 0 in
+        for i = 0 to n-1 do
+          let end_idx = Int64.to_int offsets.(i) in
+          let slice = Array.sub all_elems !start_idx (end_idx - !start_idx) |> Array.to_list in
+          res.(i) <- VArray slice;
+          start_idx := end_idx
+        done;
+        Lwt.return res
+      ) else if String.length s >= 4 && String.sub s 0 4 = "map(" then (
+        let start = 4 in
+        let endp = String.rindex s ')' in
+        let types_str = String.sub s start (endp - start) in
+        let parts = String.split_on_char ',' types_str in
+        let key_t, val_t = match parts with | [a;b] -> String.trim a, String.trim b | _ -> ("string","string") in
+        (let arr = Array.make n 0L in
+         let rec loop i = if i = n then Lwt.return arr else read_uint64_le_lwt read_fn >>= fun v -> arr.(i) <- v; loop (i+1) in
+         loop 0) >>= fun offsets ->
+        let total = if n = 0 then 0 else Int64.to_int offsets.(n-1) in
+        read_values key_t total >>= fun keys ->
+        read_values val_t total >>= fun vals ->
+        let res = Array.make n (VMap []) in
+        let idx = ref 0 in
+        for i = 0 to n-1 do
+          let end_idx = Int64.to_int offsets.(i) in
+          let pairs = ref [] in
+          while !idx < end_idx do
+            pairs := (keys.(!idx), vals.(!idx)) :: !pairs; incr idx
+          done;
+          res.(i) <- VMap (List.rev !pairs)
+        done;
+        Lwt.return res
       ) else if String.length s >= 9 && String.sub s 0 9 = "nullable(" then (
         let inner = String.sub s 9 (String.length s - 10) |> String.trim in
         read_nulls_map n >>= fun nulls ->
         read_values inner n >|= fun vals ->
         for i = 0 to n-1 do if nulls.(i) then vals.(i) <- VNull done; vals
+      ) else if String.length s >= 6 && String.sub s 0 6 = "array(" then (
+        let start = 6 in
+        let endp = String.rindex s ')' in
+        let inner = String.sub s start (endp - start) |> String.trim in
+        (let arr = Array.make n 0L in
+         let rec loop i = if i = n then Lwt.return arr else read_uint64_le_lwt read_fn >>= fun v -> arr.(i) <- v; loop (i+1) in
+         loop 0) >>= fun offsets ->
+        let total = if n = 0 then 0 else Int64.to_int offsets.(n-1) in
+        read_values inner total >>= fun all_elems ->
+        let res = Array.make n (VArray []) in
+        let start_idx = ref 0 in
+        for i = 0 to n-1 do
+          let end_idx = Int64.to_int offsets.(i) in
+          let slice = Array.sub all_elems !start_idx (end_idx - !start_idx) |> Array.to_list in
+          res.(i) <- VArray slice;
+          start_idx := end_idx
+        done;
+        Lwt.return res
+      ) else if String.length s >= 4 && String.sub s 0 4 = "map(" then (
+        let start = 4 in
+        let endp = String.rindex s ')' in
+        let types_str = String.sub s start (endp - start) in
+        let parts = String.split_on_char ',' types_str in
+        let key_t, val_t = match parts with | [a;b] -> String.trim a, String.trim b | _ -> ("string","string") in
+        (let arr = Array.make n 0L in
+         let rec loop i = if i = n then Lwt.return arr else read_uint64_le_lwt read_fn >>= fun v -> arr.(i) <- v; loop (i+1) in
+         loop 0) >>= fun offsets ->
+        let total = if n = 0 then 0 else Int64.to_int offsets.(n-1) in
+        read_values key_t total >>= fun keys ->
+        read_values val_t total >>= fun vals ->
+        let res = Array.make n (VMap []) in
+        let idx = ref 0 in
+        for i = 0 to n-1 do
+          let end_idx = Int64.to_int offsets.(i) in
+          let pairs = ref [] in
+          while !idx < end_idx do
+            pairs := (keys.(!idx), vals.(!idx)) :: !pairs; incr idx
+          done;
+          res.(i) <- VMap (List.rev !pairs)
+        done;
+        Lwt.return res
+      ) else if String.length s >= 6 && String.sub s 0 6 = "tuple(" then (
+        let start = 6 in
+        let endp = String.rindex s ')' in
+        let inner = String.sub s start (endp - start) in
+        let types =
+          let rec split acc depth i last =
+            if i = String.length inner then List.rev ((String.sub inner last (i - last)) :: acc)
+            else match inner.[i] with
+              | '(' -> split acc (depth+1) (i+1) last
+              | ')' -> split acc (depth-1) (i+1) last
+              | ',' when depth = 0 -> split ((String.sub inner last (i-last))::acc) depth (i+1) (i+1)
+              | _ -> split acc depth (i+1) last in
+          split [] 0 0 0 |> List.map String.trim in
+        let rec read_all acc = function
+          | [] -> Lwt.return (List.rev acc)
+          | t::ts -> read_values t n >>= fun arr -> read_all (arr::acc) ts in
+        read_all [] types >>= fun cols ->
+        let cols = List.map (fun a -> a) cols in
+        let arr = Array.init n (fun _ -> VTuple []) in
+        for i = 0 to n-1 do
+          let tuple = List.map (fun a -> a.(i)) cols in
+          arr.(i) <- VTuple tuple
+        done;
+        Lwt.return arr
+      ) else if String.length s >= 10 && String.sub s 0 10 = "json" then (
+        let a = Array.make n VNull in
+        let rec loop i = if i = n then Lwt.return_unit else read_str_lwt read_fn >>= fun v -> a.(i) <- VString v; loop (i+1) in
+        loop 0 >|= fun () -> a
       ) else Lwt.fail (Failure (Printf.sprintf "Unsupported column type in async: %s" type_spec))
     in
     let rec read_columns i acc =
