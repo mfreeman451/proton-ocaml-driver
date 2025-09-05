@@ -1,0 +1,72 @@
+<?xml version="1.0"?>
+<proton>
+    <profiles>
+        <!-- Default profile for testing -->
+        <default>
+            <max_memory_usage>1073741824</max_memory_usage> <!-- 1GB -->
+            <use_uncompressed_cache>0</use_uncompressed_cache>
+            <load_balancing>random</load_balancing>
+            <log_queries>1</log_queries>
+            <connect_timeout>10</connect_timeout>
+            <receive_timeout>300</receive_timeout>
+            <send_timeout>300</send_timeout>
+            <max_query_size>268435456</max_query_size> <!-- 256MB -->
+            <max_ast_depth>1000</max_ast_depth>
+            <max_ast_elements>50000</max_ast_elements>
+            <readonly>0</readonly>
+        </default>
+
+        <!-- Read-only profile for testing -->
+        <readonly>
+            <readonly>1</readonly>
+        </readonly>
+    </profiles>
+
+    <users>
+        <!-- Default user with no password for testing -->
+        <default>
+            <password></password>
+            <profile>default</profile>
+            <quota>default</quota>
+            <networks incl="networks.xml" optional="true"/>
+            <grants>
+                <query>1</query>
+                <insert>1</insert>
+                <alter>1</alter>
+                <create_database>1</create_database>
+                <create_table>1</create_table>
+                <create_view>1</create_view>
+                <create_dictionary>1</create_dictionary>
+                <drop_database>1</drop_database>
+                <drop_table>1</drop_table>
+                <drop_view>1</drop_view>
+                <drop_dictionary>1</drop_dictionary>
+            </grants>
+            <!-- Allow access to all databases and tables -->
+            <access_management>1</access_management>
+        </default>
+        
+        <!-- Test user with password -->
+        <test_user>
+            <password>test_password</password>
+            <profile>default</profile>
+            <quota>default</quota>
+            <networks>
+                <ip>::/0</ip>
+            </networks>
+        </test_user>
+    </users>
+
+    <quotas>
+        <default>
+            <interval>
+                <duration>3600</duration>
+                <queries>0</queries>
+                <errors>0</errors>
+                <result_rows>0</result_rows>
+                <read_rows>0</read_rows>
+                <execution_time>0</execution_time>
+            </interval>
+        </default>
+    </quotas>
+</proton>

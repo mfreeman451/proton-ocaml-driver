@@ -1,0 +1,53 @@
+# OCaml development environment for Proton driver testing
+FROM ocaml/opam:ubuntu-24.04-ocaml-5.1
+
+# Switch to root to install system dependencies
+USER root
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    pkg-config \
+    libssl-dev \
+    libffi-dev \
+    libgmp-dev \
+    zlib1g-dev \
+    liblz4-dev \
+    libzstd-dev \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Switch back to opam user
+USER opam
+
+# Update opam and ensure we're using the right OCaml version
+RUN opam update && \
+    opam switch list && \
+    (opam switch 5.1 2>/dev/null || opam switch create ocaml-proton 5.1.1) && \
+    eval $(opam env)
+
+# Set up the working directory
+WORKDIR /app
+
+# Copy opam files first for dependency caching
+COPY --chown=opam:opam dune-project /app/
+COPY --chown=opam:opam *.opam /app/
+
+# Install dependencies
+RUN eval $(opam env) && \
+    opam install -y --deps-only . && \
+    opam install -y utop
+
+# Copy the rest of the source code
+COPY --chown=opam:opam . /app/
+
+# Build the project
+RUN eval $(opam env) && \
+    dune build
+
+# Set up environment - these will be set by opam env
+RUN eval $(opam env) && \
+    echo 'eval $(opam env)' >> ~/.bashrc
+
+# Default command
+CMD ["tail", "-f", "/dev/null"]

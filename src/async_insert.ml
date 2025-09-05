@@ -91,7 +91,7 @@ let send_batch inserter (rows: value list list) (columns: (string * string) list
           
           (* Read the first block (should be a header block with column info) *)
           Connection.receive_packet inserter.connection >>= function
-          | PData header_block ->
+          | PData _header_block ->
               (* Create data block from our rows *)
               let n_rows = List.length rows in
               let n_cols = List.length columns in

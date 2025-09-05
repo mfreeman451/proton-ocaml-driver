@@ -53,7 +53,6 @@ let build_uncompressed_block ~cols =
   Buffer.contents buf |> Bytes.of_string
 
 let test_uncompressed_block_parse () =
-  let open Lwt.Infix in
   let bs = build_uncompressed_block ~cols:[ ("c1","String",2) ] in
   let pos = ref 0 in
   let read_fn buf off len =
@@ -85,7 +84,6 @@ let test_exception_reader () =
   | _ -> Alcotest.fail "Expected server exception"
 
 let test_enum_and_fixedstring () =
-  let open Lwt.Infix in
   let cols = [ ("e8", "Enum8('A'=1,'B'=2)", 2); ("fs", "FixedString(4)", 2) ] in
   let bs = build_uncompressed_block ~cols in
   let pos = ref 0 in

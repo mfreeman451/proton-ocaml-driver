@@ -38,6 +38,9 @@ val compress_zstd : bytes -> bytes
 (** Decompress ZSTD data with known uncompressed size *)
 val decompress_zstd : bytes -> int -> bytes
 
+(** Build a compressed frame (checksum + header + payload) for given data *)
+val build_compressed_frame : bytes -> method_t -> bytes
+
 (** Write a compressed block to output channel with proper ClickHouse framing *)
 val write_compressed_block : out_channel -> bytes -> method_t -> unit
 

@@ -1,2 +1,1 @@
-(env
- (_ (flags (:standard -w -33-8-27))))
+(executable (name test_hostname) (libraries proton lwt))

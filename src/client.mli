@@ -1,4 +1,4 @@
-open Connection
+(* Connection is used via qualified access *)
 
 (** Query result type for execute method *)
 type query_result =

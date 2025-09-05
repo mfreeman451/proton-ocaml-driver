@@ -1,0 +1,95 @@
+# Proton OCaml Driver Test Environment
+#
+# Usage:
+#   Basic testing:
+#     docker-compose up -d
+#   
+#   Run tests after startup:
+#     docker-compose exec ocaml-env dune test
+#
+# Services:
+#   - proton: Timeplus Proton database for testing
+#   - ocaml-env: OCaml development environment with the driver
+
+services:
+  # Proton Database for testing
+  proton:
+    image: ghcr.io/timeplus-io/proton:latest
+    container_name: proton-ocaml-test
+    ports:
+      - "8123:8123"  # HTTP port 
+      - "8463:8463"  # Native TCP port (main protocol)
+      - "8443:8443"  # HTTPS port (with TLS)
+      - "9440:9440"  # Native TCP secure port (with TLS)
+    volumes:
+      - proton-data:/var/lib/proton
+      - ./docker/proton-config.xml:/etc/proton-server/config.xml:ro
+      - ./docker/users.xml:/etc/proton-server/users.xml:ro
+    environment:
+      - PROTON_LOG_LEVEL=error
+      - PROTON_MAX_MEMORY_USAGE_RATIO=0.8
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8123/?query=SELECT%201 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - proton-net
+    restart: unless-stopped
+
+  # OCaml development and testing environment
+  ocaml-env:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ocaml
+    container_name: proton-ocaml-env
+    volumes:
+      # Mount source code for development
+      - .:/app
+      - opam-cache:/home/opam/.opam
+      - dune-cache:/home/opam/.cache/dune
+    environment:
+      # Test configuration
+      - PROTON_HOST=proton
+      - PROTON_PORT=8463
+      - PROTON_HTTP_PORT=8123
+      - PROTON_DATABASE=default
+      - PROTON_USER=default
+      - PROTON_PASSWORD=
+      # Development settings
+      - OPAMROOT=/home/opam/.opam
+      - OCAML_VERSION=5.1
+    working_dir: /app
+    depends_on:
+      proton:
+        condition: service_healthy
+    networks:
+      - proton-net
+    # Keep container running for development
+    command: ["tail", "-f", "/dev/null"]
+    restart: unless-stopped
+
+networks:
+  proton-net:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: proton-ocaml-br
+
+volumes:
+  proton-data:
+    driver: local
+  opam-cache:
+    driver: local
+  dune-cache:
+    driver: local
