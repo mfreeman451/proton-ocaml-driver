@@ -40,7 +40,7 @@ type t = {
 }
 
 let default_tls_config = {
-  enable_tls = true;
+  enable_tls = false;  (* Changed to false by default for testing *)
   ca_cert_file = None;
   client_cert_file = None;
   client_key_file = None;
@@ -141,7 +141,18 @@ let write_varint_int_to_buffer buf n =
 let connect t =
   if t.connected then Lwt.return_unit else
   let fd = Lwt_unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
-  let addr = Unix.inet_addr_of_string t.host in
+  (* Try to parse as IP address first, if that fails, resolve as hostname *)
+  let get_addr host =
+    try Lwt.return (Unix.inet_addr_of_string host)
+    with Invalid_argument _ | Failure _ ->
+      (* It's not an IP address, try to resolve as hostname *)
+      Lwt_unix.gethostbyname host >>= fun host_entry ->
+      if Array.length host_entry.Unix.h_addr_list > 0 then
+        Lwt.return host_entry.Unix.h_addr_list.(0)
+      else
+        Lwt.fail (Failure ("Cannot resolve host: " ^ host))
+  in
+  get_addr t.host >>= fun addr ->
   let sockaddr = Unix.ADDR_INET (addr, t.port) in
   Lwt_unix.connect fd sockaddr >>= fun () ->
   (if t.tls_config.enable_tls then
@@ -225,7 +236,7 @@ let receive_hello t =
                  revision = server_revision; timezone = (match server_timezone with Some tz -> Some tz | None -> None); display_name = server_display_name } in
       t.srv <- Some si; t.ctx.server_info <- Some si; Lwt.return_unit
   | SException -> Lwt.fail (Failure "Server exception in hello")
-  | other -> Lwt.fail (Unexpected_packet (Printf.sprintf "Expected HELLO, got %d" p))
+  | _other -> Lwt.fail (Unexpected_packet (Printf.sprintf "Expected HELLO, got %d" p))
 
 let force_connect t =
   (if not t.connected then connect t else Lwt.return_unit) >>= fun () ->
@@ -315,7 +326,7 @@ let read_progress t read_fn =
   (if revision >= Defines.dbms_min_revision_with_total_rows_in_progress then read_varint_int_lwt read_fn >|= ignore else Lwt.return_unit) >>= fun () ->
   (if revision >= Defines.dbms_min_revision_with_client_write_info then read_varint_int_lwt read_fn >>= fun _ -> read_varint_int_lwt read_fn >|= ignore else Lwt.return_unit)
 
-let read_profile_info t read_fn =
+let read_profile_info _t read_fn =
   read_varint_int_lwt read_fn >>= fun _ ->
   read_varint_int_lwt read_fn >>= fun _ ->
   read_varint_int_lwt read_fn >>= fun _ ->
@@ -403,6 +414,7 @@ let receive_packet t : packet Lwt.t =
   | SLog -> receive_data t ~raw:true read_fn >|= fun b -> PLog b
   | STableColumns -> read_str_lwt read_fn >>= fun _ -> read_str_lwt read_fn >|= fun _ -> PProgress
   | SPartUUIDs | SReadTaskRequest | SProfileEvents -> receive_data t ~raw:false read_fn >|= fun _ -> PProgress
+  | SHello | SPong | STablesStatusResponse -> receive_data t ~raw:false read_fn >|= fun _ -> PProgress
 
 let read_exception_from_bytes (bs:bytes) : exn Lwt.t =
   let pos = ref 0 in

@@ -1,4 +1,4 @@
-open Binary
+(* Removed unused open Binary *)
 
 let write_varint_to_buffer buf n =
   let rec loop n =
@@ -54,7 +54,7 @@ let rec write_value_to_buffer buf value =
       write_int32_le_to_buffer buf (Int64.to_int32 (Int64.shift_right_logical bits 32))
   | Columns.VDateTime (timestamp, _) ->
       write_int32_le_to_buffer buf (Int64.to_int32 timestamp)
-  | Columns.VDateTime64 (timestamp, precision, _) ->
+  | Columns.VDateTime64 (timestamp, _precision, _) ->
       write_int32_le_to_buffer buf (Int64.to_int32 (Int64.logand timestamp 0xFFFFFFFFL));
       write_int32_le_to_buffer buf (Int64.to_int32 (Int64.shift_right_logical timestamp 32))
   | Columns.VEnum8 (_, value) -> Buffer.add_char buf (Char.chr value)

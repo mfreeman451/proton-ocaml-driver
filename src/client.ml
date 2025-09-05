@@ -1,6 +1,6 @@
 open Connection
 open Block
-open Columns
+(* Columns used via qualified access *)
 open Lwt.Infix
 
 type query_result =

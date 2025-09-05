@@ -1,5 +1,4 @@
-open Varint
-open Binary
+(* Removed unused opens - Varint and Binary *)
 
 type t = {
   mutable is_overflows : bool;
