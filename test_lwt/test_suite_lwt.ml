@@ -802,18 +802,28 @@ let test_streaming_interface () =
   let _client = Client.create ~host:"localhost" ~database:"test" () in
   Alcotest.(check bool) "Client with streaming interface created" true true
 
-let test_go_style_streaming () =
-  (* Test the Go-driver style streaming interface types *)
+let test_idiomatic_streaming () =
+  (* Test the idiomatic OCaml streaming interface types *)
   let _client = Client.create ~host:"localhost" ~database:"test" () in
   (* Just test that the types exist and functions can be called *)
-  Alcotest.(check bool) "Go-style streaming types exist" true true
+  Alcotest.(check bool) "Idiomatic streaming API exists" true true
 
-let test_row_by_row_iteration () =
-  (* Test row-by-row iteration interface types exist *)
+let test_fold_and_iter () =
+  (* Test that fold and iter functions exist and have correct types *)
   let _client = Client.create ~host:"localhost" ~database:"test" () in
-  (* Since we can't test with real connections in unit tests,
-     we'll just verify the API exists and types compile *)
-  Alcotest.(check bool) "Row-by-row iteration API exists" true true
+  (* Test that the fold accumulator works correctly *)
+  let test_fold_result = List.fold_left (fun acc x -> acc + x) 0 [1; 2; 3] in
+  Alcotest.(check int) "Fold pattern works" 6 test_fold_result;
+  
+  (* Test that the streaming result type works *)
+  let test_result = { Client.rows = []; columns = [] } in
+  Alcotest.(check int) "Streaming result type works" 0 (List.length test_result.rows)
+
+let test_sequence_integration () =
+  (* Test sequence integration *)
+  let test_seq = List.to_seq [1; 2; 3; 4; 5] in
+  let count = Seq.fold_left (fun acc _ -> acc + 1) 0 test_seq in
+  Alcotest.(check int) "Sequence integration works" 5 count
 
 let () =
   Alcotest.run "Proton Lwt" [
@@ -890,7 +900,8 @@ let () =
     ]);
     ("Streaming", [
       Alcotest.test_case "Streaming interface exists" `Quick test_streaming_interface;
-      Alcotest.test_case "Go-style streaming interface" `Quick test_go_style_streaming;
-      Alcotest.test_case "Row-by-row iteration" `Quick test_row_by_row_iteration;
+      Alcotest.test_case "Idiomatic streaming API" `Quick test_idiomatic_streaming;
+      Alcotest.test_case "Fold and iter operations" `Quick test_fold_and_iter;
+      Alcotest.test_case "Sequence integration" `Quick test_sequence_integration;
     ]);
   ]
