@@ -597,6 +597,31 @@ let receive_data t ~raw read_fn : Block.t Lwt.t =
         let a = Array.make n VNull in
         let rec loop i = if i = n then Lwt.return_unit else read_str_lwt read_fn >>= fun v -> a.(i) <- VString v; loop (i+1) in
         loop 0 >|= fun () -> a
+      ) else if s = "ipv4" then (
+        let a = Array.make n VNull in
+        let rec loop i = 
+          if i = n then Lwt.return_unit 
+          else read_int32_le_lwt read_fn >>= fun v32 ->
+            let v = Int32.to_int v32 in
+            let b0 = v land 0xFF and b1 = (v lsr 8) land 0xFF and b2 = (v lsr 16) land 0xFF and b3 = (v lsr 24) land 0xFF in
+            a.(i) <- VString (Printf.sprintf "%d.%d.%d.%d" b0 b1 b2 b3);
+            loop (i+1) in
+        loop 0 >|= fun () -> a
+      ) else if s = "ipv6" then (
+        let a = Array.make n VNull in
+        let rec loop i = 
+          if i = n then Lwt.return_unit 
+          else 
+            lwt_read_exact read_fn 16 >>= fun buf ->
+            let hex i = Printf.sprintf "%02x" (Char.code (Bytes.get buf i)) in
+            a.(i) <- VString (String.concat ":" (List.init 8 (fun i -> hex (2*i) ^ hex (2*i+1))));
+            loop (i+1) in
+        loop 0 >|= fun () -> a
+      ) else if String.length s >= 7 && String.sub s 0 7 = "decimal" then (
+        (* For now, just read as strings - proper decimal support would need parsing the precision/scale *)
+        let a = Array.make n VNull in
+        let rec loop i = if i = n then Lwt.return_unit else read_str_lwt read_fn >>= fun v -> a.(i) <- VString v; loop (i+1) in
+        loop 0 >|= fun () -> a
       ) else Lwt.fail (Failure (Printf.sprintf "Unsupported column type in async: %s" type_spec))
     in
     let rec read_columns i acc =

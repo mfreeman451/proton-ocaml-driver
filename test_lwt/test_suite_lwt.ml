@@ -37,6 +37,10 @@ let build_uncompressed_block ~cols =
       | "int64" | "uint64" -> writeln_int64 42L
       | "float64" -> Buffer.add_string buf (Bytes.to_string (Bytes.make 8 '\x00'))
       | "ipv4" -> writeln_int32 ((127 lsl 24) lor 1)
+      | s when String.length s >= 8 && String.sub s 0 8 = "decimal(" ->
+          (* write signed int64 raw: e.g., 12345 for Decimal(10,2) -> 123.45 *)
+          writeln_int64 12345L
+      | "ipv6" -> Buffer.add_string buf (Bytes.to_string (Bytes.make 16 '\x01'))
       | "uuid" -> Buffer.add_string buf (Bytes.to_string (Bytes.make 16 '\x01'))
       | s when String.length s >= 9 && String.sub s 0 9 = "nullable(" ->
           Buffer.add_char buf '\x00'; write_str buf "abc"
@@ -117,6 +121,48 @@ let test_lowcardinality_basic () =
       Alcotest.(check string) "lc type" "LowCardinality(String)" c.Block.type_spec
   | _ -> Alcotest.fail "Unexpected LC block"
 
+let test_lowcardinality_nullable () =
+  (* LC(Nullable(String)) with keys [0,null,1] *)
+  let buf = Buffer.create 128 in
+  write_varint buf 0; write_varint buf 1; write_varint buf 3;
+  write_str buf "lcn"; write_str buf "LowCardinality(Nullable(String))";
+  Buffer.add_string buf "\x00\x00\x00\x00\x00\x00\x00\x00"; (* key type *)
+  Buffer.add_string buf "\x01\x00\x00\x00\x00\x00\x00\x00"; (* dict rows=1 *)
+  write_str buf "x"; (* dict[0] = x *)
+  Buffer.add_string buf "\x03\x00\x00\x00\x00\x00\x00\x00"; (* keys rows=3 *)
+  Buffer.add_char buf '\x00'; Buffer.add_char buf '\x00'; Buffer.add_char buf '\x01';
+  let bs = Buffer.contents buf |> Bytes.of_string in
+  let pos = ref 0 in
+  let read_fn b o l = let rem = Bytes.length bs - !pos in let n = min l rem in Bytes.blit bs !pos b o n; pos := !pos + n; Lwt.return n in
+  let t = Connection.create ~compression:Compress.None () in
+  t.Connection.srv <- Some { Context.name=""; version_major=0; version_minor=0; version_patch=0; revision=Defines.dbms_min_revision_with_block_info; timezone=None; display_name="" };
+  match Lwt_main.run (Connection.receive_data t ~raw:true read_fn) with
+  | { Block.n_rows=3; columns=[c]; _ } ->
+      Alcotest.(check string) "type" "LowCardinality(Nullable(String))" c.Block.type_spec
+  | _ -> Alcotest.fail "Unexpected LC(N) block"
+
+let test_decimal_formatting () =
+  let cols = [ ("d", "Decimal(10,2)", 1) ] in
+  let bs = build_uncompressed_block ~cols in
+  let pos = ref 0 in
+  let read_fn buf off len = let rem = Bytes.length bs - !pos in let n = min len rem in Bytes.blit bs !pos buf off n; pos := !pos + n; Lwt.return n in
+  let t = Connection.create ~compression:Compress.None () in
+  t.Connection.srv <- Some { Context.name=""; version_major=0; version_minor=0; version_patch=0; revision=Defines.dbms_min_revision_with_block_info; timezone=None; display_name="" };
+  match Lwt_main.run (Connection.receive_data t ~raw:true read_fn) with
+  | { Block.n_rows=1; columns=[c]; _ } ->
+      Alcotest.(check string) "type" "Decimal(10,2)" c.Block.type_spec
+  | _ -> Alcotest.fail "Unexpected Decimal block"
+
+let test_ip_formatting () =
+  let cols = [ ("v4","IPv4",1); ("v6","IPv6",1) ] in
+  let bs = build_uncompressed_block ~cols in
+  let pos = ref 0 in
+  let read_fn buf off len = let rem = Bytes.length bs - !pos in let n = min len rem in Bytes.blit bs !pos buf off n; pos := !pos + n; Lwt.return n in
+  let t = Connection.create ~compression:Compress.None () in
+  t.Connection.srv <- Some { Context.name=""; version_major=0; version_minor=0; version_patch=0; revision=Defines.dbms_min_revision_with_block_info; timezone=None; display_name="" };
+  ignore (Lwt_main.run (Connection.receive_data t ~raw:true read_fn));
+  ()
+
 let test_pool_basics () =
   let pool = Pool.create_pool (fun () -> Connection.create ()) in
   Pool.start_cleanup pool ~period:0.1;
@@ -132,6 +178,9 @@ let () =
       Alcotest.test_case "exception reader" `Quick test_exception_reader;
       Alcotest.test_case "enum + fixedstring" `Quick test_enum_and_fixedstring;
       Alcotest.test_case "lowcardinality basic" `Quick test_lowcardinality_basic;
+      Alcotest.test_case "lowcardinality nullable" `Quick test_lowcardinality_nullable;
+      Alcotest.test_case "decimal formatting" `Quick test_decimal_formatting;
+      Alcotest.test_case "ip formatting" `Quick test_ip_formatting;
       Alcotest.test_case "pool basics" `Quick test_pool_basics;
     ]);
   ]

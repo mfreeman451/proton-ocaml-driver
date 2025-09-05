@@ -27,8 +27,8 @@ let reader_primitive_of_spec (s:string)
           let b = really_input_bytes ic 16 in
           let hex i = Printf.sprintf "%02x" (Char.code (Bytes.get b i)) in
           let part a b = String.concat "" (List.init (b-a+1) (fun k -> hex (a+k))) in
-          let s = part 0 3 ^ part 4 5 ^ part 6 7 ^ "-" ^ part 8 9 ^ "-" ^ part 10 11 ^ "-" ^ part 12 13 ^ "-" ^ part 14 15 in
-          VString s)))
+          let s = part 0 3 ^ "-" ^ part 4 5 ^ "-" ^ part 6 7 ^ "-" ^ part 8 9 ^ "-" ^ part 10 15 in
+          VString s))
   | _ when s = "ipv4" ->
       Some (fun ic n -> Array.init n (fun _ ->
         let v = read_int32_le ic |> Int32.to_int in
@@ -68,8 +68,8 @@ let reader_primitive_of_spec_br (s:string)
           let b = really_input_bytes_br br 16 in
           let hex i = Printf.sprintf "%02x" (Char.code (Bytes.get b i)) in
           let part a b = String.concat "" (List.init (b-a+1) (fun k -> hex (a+k))) in
-          let s = part 0 3 ^ part 4 5 ^ part 6 7 ^ "-" ^ part 8 9 ^ "-" ^ part 10 11 ^ "-" ^ part 12 13 ^ "-" ^ part 14 15 in
-          VString s)))
+          let s = part 0 3 ^ "-" ^ part 4 5 ^ "-" ^ part 6 7 ^ "-" ^ part 8 9 ^ "-" ^ part 10 15 in
+          VString s))
   | _ when s = "ipv4" ->
       Some (fun br n -> Array.init n (fun _ ->
         let v = read_int32_le_br br |> Int32.to_int in

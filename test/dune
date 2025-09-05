@@ -1,3 +1,1 @@
-(test
- (name test_suite)
- (libraries proton alcotest str))
+; removed legacy sync test suite
