@@ -296,7 +296,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Support
 
-- **Documentation**: [Full API Documentation](docs/)
 - **Issues**: [GitHub Issues](https://github.com/mfreeman451/proton-ocaml-driver/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/mfreeman451/proton-ocaml-driver/discussions)
 - **Timeplus Community**: [Timeplus Slack](https://timeplus.com/slack)
