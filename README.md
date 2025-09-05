@@ -2,17 +2,17 @@
 
 A high-performance, feature-rich OCaml driver for [Timeplus Proton](https://timeplus.com/) - the streaming database built on ClickHouse.
 
-## ✨ Features
+## Features
 
-- **🚀 Streaming Queries** - Process large datasets with constant memory usage
-- **🔄 Async Inserts** - High-throughput data ingestion with automatic batching
-- **🗜️ Compression** - LZ4 and ZSTD support for reduced network overhead  
-- **🔐 TLS Security** - Secure connections with certificate validation
-- **🏊 Connection Pooling** - Efficient resource management for high-concurrency applications
-- **📊 Rich Data Types** - Full support for ClickHouse types including Arrays, Maps, Enums, DateTime64
-- **🎯 Idiomatic OCaml** - Functional API leveraging OCaml's strengths
+- **Streaming Queries** - Process large datasets with constant memory usage
+- **Async Inserts** - High-throughput data ingestion with automatic batching
+- **Compression** - LZ4 and ZSTD support for reduced network overhead  
+- **TLS Security** - Secure connections with certificate validation
+- **Connection Pooling** - Efficient resource management for high-concurrency applications
+- **Rich Data Types** - Full support for ClickHouse types including Arrays, Maps, Enums, DateTime64
+- **Idiomatic OCaml** - Functional API leveraging OCaml's strengths
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Installation
 
@@ -41,7 +41,7 @@ match result with
     Lwt.return_unit
 ```
 
-## 🌊 Streaming Queries
+## Streaming Queries
 
 Process arbitrarily large result sets with constant memory usage using OCaml's functional patterns:
 
@@ -99,7 +99,7 @@ Printf.printf "Found %d products with columns: %s\n"
   (String.concat "," (List.map fst result.columns))
 ```
 
-## ⚡ High-Performance Async Inserts
+## High-Performance Async Inserts
 
 Insert data efficiently with automatic batching, compression, and retry logic:
 
@@ -146,7 +146,7 @@ let%lwt () = Async_insert.stop inserter in
 Client.disconnect client
 ```
 
-## 🎯 Data Types
+## Data Types
 
 Full support for ClickHouse data types with OCaml-native representations:
 
@@ -166,7 +166,7 @@ let sample_row = [
 ]
 ```
 
-## 🔧 Configuration Options
+## Configuration Options
 
 ### Connection Configuration
 
@@ -210,7 +210,7 @@ Pool_lwt.use pool (fun client ->
 )
 ```
 
-## 📊 Real-World Examples
+## Real-World Examples
 
 ### Analytics Pipeline
 
@@ -260,7 +260,7 @@ let etl_pipeline source_query transform_fn target_table =
   Async_insert.stop inserter
 ```
 
-## 🛠️ Development Setup
+## Development Setup
 
 ### Prerequisites
 
@@ -286,21 +286,17 @@ dune build
 dune runtest
 ```
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome! Please see our [contribution guidelines](CONTRIBUTING.md).
 
-## 📝 License
+## License
 
-This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🆘 Support
+## Support
 
 - **Documentation**: [Full API Documentation](docs/)
-- **Issues**: [GitHub Issues](https://github.com/your-org/proton-ocaml-driver/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-org/proton-ocaml-driver/discussions)
+- **Issues**: [GitHub Issues](https://github.com/mfreeman451/proton-ocaml-driver/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/mfreeman451/proton-ocaml-driver/discussions)
 - **Timeplus Community**: [Timeplus Slack](https://timeplus.com/slack)
-
----
-
-Made with ❤️ for the OCaml and streaming analytics community.
