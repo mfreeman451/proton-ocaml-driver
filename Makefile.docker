@@ -1,0 +1,78 @@
+# Proton OCaml Driver Docker Test Environment
+# Usage: make -f Makefile.docker <target>
+
+.PHONY: help up down build test clean logs shell proton-shell
+
+help: ## Show this help message
+	@echo "Proton OCaml Driver Test Environment"
+	@echo "===================================="
+	@echo ""
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'
+
+up: ## Start the test environment
+	docker-compose up -d
+	@echo "⏳ Waiting for services to be ready..."
+	@sleep 5
+	@echo "✅ Test environment is ready!"
+	@echo "   Proton Web UI: http://localhost:8123"
+	@echo "   Native port: localhost:8463"
+
+down: ## Stop the test environment
+	docker-compose down
+
+build: ## Build the Docker images
+	docker-compose build
+
+test: ## Run all tests in the container
+	docker-compose exec ocaml-env /app/docker/test-runner.sh
+
+test-simple: ## Run simple tests only
+	docker-compose exec ocaml-env dune exec test_simple/simple_test.exe
+
+test-lwt: ## Run Lwt tests only  
+	docker-compose exec ocaml-env dune test
+
+build-project: ## Build the OCaml project in container
+	docker-compose exec ocaml-env dune build
+
+clean-build: ## Clean and rebuild the project
+	docker-compose exec ocaml-env dune clean
+	docker-compose exec ocaml-env dune build
+
+logs: ## Show logs from all services
+	docker-compose logs -f
+
+logs-proton: ## Show Proton database logs
+	docker-compose logs -f proton
+
+logs-ocaml: ## Show OCaml container logs
+	docker-compose logs -f ocaml-env
+
+shell: ## Get a shell in the OCaml container
+	docker-compose exec ocaml-env bash
+
+proton-shell: ## Connect to Proton database shell
+	docker-compose exec proton proton-client --host localhost --port 8463
+
+proton-http: ## Test Proton HTTP interface
+	curl "http://localhost:8123/?query=SELECT%20version()"
+
+clean: ## Clean up everything (containers, volumes, images)
+	docker-compose down -v
+	docker-compose down --rmi all
+
+restart: down up ## Restart the environment
+
+status: ## Show container status
+	docker-compose ps
+
+examples: ## Run example programs
+	docker-compose exec ocaml-env ./_build/default/examples/compression_example.exe
+
+dev-setup: up build-project ## Complete development setup
+	@echo "🎉 Development environment is ready!"
+	@echo ""
+	@echo "Quick commands:"
+	@echo "  make -f Makefile.docker test      # Run all tests"
+	@echo "  make -f Makefile.docker shell     # Get OCaml shell"
+	@echo "  make -f Makefile.docker logs      # View logs"

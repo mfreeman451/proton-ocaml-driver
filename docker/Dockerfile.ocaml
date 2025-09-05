@@ -1,0 +1,54 @@
+# OCaml development environment for Proton driver testing
+FROM ocaml/opam:ubuntu-24.04-ocaml-5.1
+
+# Switch to root to install system dependencies
+USER root
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    pkg-config \
+    libssl-dev \
+    libffi-dev \
+    libgmp-dev \
+    zlib1g-dev \
+    liblz4-dev \
+    libzstd-dev \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Switch back to opam user
+USER opam
+
+# Update opam and install OCaml
+RUN opam update && \
+    opam switch create 5.1 5.1.1 && \
+    eval $(opam env --switch=5.1)
+
+# Set up the working directory
+WORKDIR /app
+
+# Copy opam files first for dependency caching
+COPY --chown=opam:opam dune-project /app/
+COPY --chown=opam:opam *.opam /app/
+
+# Install dependencies
+RUN eval $(opam env --switch=5.1) && \
+    opam install -y --deps-only . && \
+    opam install -y utop merlin ocaml-lsp-server
+
+# Copy the rest of the source code
+COPY --chown=opam:opam . /app/
+
+# Build the project
+RUN eval $(opam env --switch=5.1) && \
+    dune build
+
+# Set up environment
+ENV PATH="/home/opam/.opam/5.1/bin:$PATH"
+ENV OPAM_SWITCH_PREFIX="/home/opam/.opam/5.1"
+ENV CAML_LD_LIBRARY_PATH="/home/opam/.opam/5.1/lib/stublibs:/home/opam/.opam/5.1/lib/ocaml/stublibs:/home/opam/.opam/5.1/lib/ocaml"
+ENV OCAML_TOPLEVEL_PATH="/home/opam/.opam/5.1/lib/toplevel"
+
+# Default command
+CMD ["tail", "-f", "/dev/null"]
