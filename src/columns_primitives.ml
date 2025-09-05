@@ -40,6 +40,41 @@ let reader_primitive_of_spec (s:string)
         let hex i = Printf.sprintf "%02x" (Char.code (Bytes.get b i)) in
         VString (String.concat ":" (List.init 8 (fun i -> hex (2*i) ^ hex (2*i+1))))))
   | _ when s = "json" -> Some (fun ic n -> Array.init n (fun _ -> VString (read_str ic)))
+  | _ when String.length s >= 6 && String.sub s 0 6 = "enum8(" -> 
+      (* Parse enum8 mapping *)
+      let inside = String.sub s 6 (String.length s - 7) in
+      let pairs = String.split_on_char ',' inside |> List.filter (fun x -> String.trim x <> "") in
+      let tbl = Hashtbl.create 16 in
+      List.iter (fun p -> match String.split_on_char '=' p with
+        | [name; v] ->
+            let name = String.trim name in
+            let name = if String.length name >= 2 && name.[0] = '\'' then String.sub name 1 (String.length name - 2) else name in
+            let v = int_of_string (String.trim v) in Hashtbl.add tbl v name
+        | _ -> ()) pairs;
+      Some (fun ic n -> Array.init n (fun _ ->
+        let b = read_uint8 ic in
+        let v = if b > 127 then b - 256 else b in
+        let s = try Hashtbl.find tbl v with Not_found -> string_of_int v in
+        VString s))
+  | _ when String.length s >= 7 && String.sub s 0 7 = "enum16(" ->
+      (* Parse enum16 mapping *)
+      let inside = String.sub s 7 (String.length s - 8) in
+      let pairs = String.split_on_char ',' inside |> List.filter (fun x -> String.trim x <> "") in
+      let tbl = Hashtbl.create 32 in
+      List.iter (fun p -> match String.split_on_char '=' p with
+        | [name; v] ->
+            let name = String.trim name in
+            let name = if String.length name >= 2 && name.[0] = '\'' then String.sub name 1 (String.length name - 2) else name in
+            let v = int_of_string (String.trim v) in Hashtbl.add tbl v name
+        | _ -> ()) pairs;
+      Some (fun ic n -> Array.init n (fun _ ->
+        let v32 = read_int32_le ic in
+        let v = Int32.to_int v32 in
+        let s = try Hashtbl.find tbl v with Not_found -> string_of_int v in
+        VString s))
+  | _ when String.length s >= 7 && String.sub s 0 7 = "decimal" ->
+      (* Decimal values are stored as integers. For Decimal(10,2) it's int64 *)
+      Some (fun ic n -> Array.init n (fun _ -> VInt64 (read_uint64_le ic)))
   | _ -> None
 
 let reader_primitive_of_spec_br (s:string)
@@ -81,5 +116,40 @@ let reader_primitive_of_spec_br (s:string)
         let hex i = Printf.sprintf "%02x" (Char.code (Bytes.get b i)) in
         VString (String.concat ":" (List.init 8 (fun i -> hex (2*i) ^ hex (2*i+1))))))
   | _ when s = "json" -> Some (fun br n -> Array.init n (fun _ -> VString (read_str_br br)))
+  | _ when String.length s >= 6 && String.sub s 0 6 = "enum8(" -> 
+      (* Parse enum8 mapping *)
+      let inside = String.sub s 6 (String.length s - 7) in
+      let pairs = String.split_on_char ',' inside |> List.filter (fun x -> String.trim x <> "") in
+      let tbl = Hashtbl.create 16 in
+      List.iter (fun p -> match String.split_on_char '=' p with
+        | [name; v] ->
+            let name = String.trim name in
+            let name = if String.length name >= 2 && name.[0] = '\'' then String.sub name 1 (String.length name - 2) else name in
+            let v = int_of_string (String.trim v) in Hashtbl.add tbl v name
+        | _ -> ()) pairs;
+      Some (fun br n -> Array.init n (fun _ ->
+        let b = read_uint8_br br in
+        let v = if b > 127 then b - 256 else b in
+        let s = try Hashtbl.find tbl v with Not_found -> string_of_int v in
+        VString s))
+  | _ when String.length s >= 7 && String.sub s 0 7 = "enum16(" ->
+      (* Parse enum16 mapping *)
+      let inside = String.sub s 7 (String.length s - 8) in
+      let pairs = String.split_on_char ',' inside |> List.filter (fun x -> String.trim x <> "") in
+      let tbl = Hashtbl.create 32 in
+      List.iter (fun p -> match String.split_on_char '=' p with
+        | [name; v] ->
+            let name = String.trim name in
+            let name = if String.length name >= 2 && name.[0] = '\'' then String.sub name 1 (String.length name - 2) else name in
+            let v = int_of_string (String.trim v) in Hashtbl.add tbl v name
+        | _ -> ()) pairs;
+      Some (fun br n -> Array.init n (fun _ ->
+        let v32 = read_int32_le_br br in
+        let v = Int32.to_int v32 in
+        let s = try Hashtbl.find tbl v with Not_found -> string_of_int v in
+        VString s))
+  | _ when String.length s >= 7 && String.sub s 0 7 = "decimal" ->
+      (* Decimal values are stored as integers. For Decimal(10,2) it's int64 *)
+      Some (fun br n -> Array.init n (fun _ -> VInt64 (read_uint64_le_br br)))
   | _ -> None
 
