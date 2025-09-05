@@ -1,6 +1,6 @@
 # Async Insert Guide
 
-The Proton OCaml driver provides async insert functionality for high-throughput data ingestion scenarios where you need to insert many rows efficiently without blocking your application.
+The Proton OCaml driver provides powerful async insert functionality for high-throughput data ingestion scenarios where you need to insert many rows efficiently without blocking your application.
 
 ## Key Features
 
@@ -9,8 +9,9 @@ The Proton OCaml driver provides async insert functionality for high-throughput 
 - **Configurable triggers**: Flush based on row count, byte size, or time intervals
 - **Error handling**: Automatic retry logic with exponential backoff
 - **Buffer management**: Automatic memory management with configurable limits
+- **Binary protocol**: Uses ClickHouse native binary Data packet protocol for optimal performance
 
-## Basic Usage
+## Quick Start
 
 ### Simple Insert
 
@@ -131,7 +132,7 @@ All standard Proton value types are supported:
 1. **Batch size**: Larger batches reduce network overhead but use more memory
 2. **Flush interval**: Longer intervals improve throughput but increase latency
 3. **Retry strategy**: More retries improve reliability but can delay error detection
-4. **Column specification**: Only provide column info on the first row for better performance
+4. **Binary protocol**: Uses native ClickHouse binary format for maximum efficiency
 
 ## Error Handling
 
@@ -143,3 +144,47 @@ The async inserter handles errors gracefully:
 ## Thread Safety
 
 The async inserter is thread-safe and uses Lwt mutexes internally. Multiple threads can safely call `add_row` concurrently.
+
+## Real-World Example
+
+```ocaml
+(* High-throughput event ingestion system *)
+open Lwt.Infix
+
+let setup_event_pipeline () =
+  let client = Client.create ~host:"proton-cluster" ~database:"analytics" () in
+  
+  let config = { 
+    (Async_insert.default_config "events") with
+    max_batch_size = 5000;
+    max_batch_bytes = 2_000_000;
+    flush_interval = 5.0;
+    max_retries = 3;
+  } in
+  
+  let inserter = Async_insert.create config client.conn in
+  Async_insert.start inserter;
+  
+  (* Process incoming events *)
+  let process_event event_json =
+    let event_row = [
+      Columns.VString event_json.user_id;
+      Columns.VString event_json.event_type;
+      Columns.VDateTime (Int64.of_float event_json.timestamp, Some "UTC");
+      Columns.VString (Yojson.to_string event_json.properties);
+    ] in
+    Async_insert.add_row inserter event_row
+  in
+  
+  (* Setup graceful shutdown *)
+  Lwt_unix.on_signal Sys.sigterm (fun _ ->
+    Printf.printf "Shutting down event pipeline...\n";
+    Lwt.async (fun () ->
+      Async_insert.stop inserter >>= fun () ->
+      Client.disconnect client >>= fun () ->
+      Lwt_io.println "Pipeline shutdown complete"
+    )
+  );
+  
+  (inserter, process_event)
+```

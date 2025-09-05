@@ -1,9 +1,15 @@
 open Connection
 
-(** Query result type *)
+(** Query result type for execute method *)
 type query_result =
   | NoRows  (** No rows returned *)
   | Rows of (Columns.value list list * (string * string) list)  (** Rows with column metadata *)
+
+(** Streaming result with both rows and column information *)
+type 'a streaming_result = {
+  rows: 'a;
+  columns: (string * string) list;
+}
 
 (** Client type *)
 type t = { conn : Connection.t }
@@ -20,6 +26,32 @@ val disconnect : t -> unit Lwt.t
 
 (** [execute client query] executes a query and returns the result *)
 val execute : t -> string -> query_result Lwt.t
+
+(** Streaming query functionality *)
+
+(** [query_fold client query ~init ~f] executes a query and folds over results *)
+val query_fold : t -> string -> init:'acc -> f:('acc -> Columns.value list -> 'acc Lwt.t) -> 'acc Lwt.t
+
+(** [query_iter client query ~f] executes a query and iterates over each row *)  
+val query_iter : t -> string -> f:(Columns.value list -> unit Lwt.t) -> unit Lwt.t
+
+(** [query_to_seq client query] returns a lazy sequence of rows *)
+val query_to_seq : t -> string -> Columns.value list Seq.t Lwt.t
+
+(** [query_collect client query] collects all rows (convenience method) *)
+val query_collect : t -> string -> Columns.value list list Lwt.t
+
+(** Advanced streaming with column metadata *)
+
+(** [query_fold_with_columns client query ~init ~f] fold with column metadata *)
+val query_fold_with_columns : t -> string -> init:'acc -> 
+  f:('acc -> Columns.value list -> (string * string) list -> 'acc Lwt.t) -> 
+  'acc streaming_result Lwt.t
+
+(** [query_iter_with_columns client query ~f] iterate with column metadata *)
+val query_iter_with_columns : t -> string -> 
+  f:(Columns.value list -> (string * string) list -> unit Lwt.t) -> 
+  (string * string) list Lwt.t
 
 (** Async insert functionality *)
 

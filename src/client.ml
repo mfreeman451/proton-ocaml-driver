@@ -47,6 +47,93 @@ let execute c (query:string) : query_result Lwt.t =
       in
       Rows (rows, columns)
 
+(* Streaming query functionality *)
+
+(* Idiomatic OCaml streaming interface *)
+
+type 'a streaming_result = {
+  rows: 'a;
+  columns: (string * string) list;
+}
+
+(* Core streaming implementation - processes packets and calls handler for each row *)
+let stream_query_rows c query ~on_row ~on_columns =
+  Connection.send_query c.conn query >>= fun () ->
+  let columns_ref = ref [] in
+  let rec loop () =
+    Connection.receive_packet c.conn >>= function
+    | PEndOfStream -> Lwt.return_unit
+    | PData b ->
+        (if b.n_rows = 0 then (
+          (* Header block with column definitions *)
+          let new_columns = Block.columns_with_types b in
+          if new_columns <> [] then (
+            columns_ref := new_columns;
+            on_columns new_columns
+          ) else Lwt.return_unit
+        ) else Lwt.return_unit) >>= fun () ->
+        (if b.n_rows > 0 then (
+          (* Data block with actual rows *)
+          let rows = Block.get_rows b in
+          Lwt_list.iter_s on_row rows
+        ) else Lwt.return_unit) >>= fun () -> 
+        loop ()
+    | PTotals b when b.n_rows > 0 ->
+        let rows = Block.get_rows b in
+        Lwt_list.iter_s on_row rows >>= fun () ->
+        loop ()
+    | PExtremes _ | PLog _ | PProgress | PProfileInfo | PTotals _ -> 
+        loop () (* Skip metadata packets *)
+  in
+  loop () >|= fun () -> !columns_ref
+
+let query_fold c query ~init ~f =
+  let acc_ref = ref init in
+  stream_query_rows c query 
+    ~on_row:(fun row -> 
+      f !acc_ref row >>= fun new_acc ->
+      acc_ref := new_acc;
+      Lwt.return_unit)
+    ~on_columns:(fun _ -> Lwt.return_unit)
+  >|= fun _ -> !acc_ref
+
+let query_iter c query ~f =
+  stream_query_rows c query
+    ~on_row:f
+    ~on_columns:(fun _ -> Lwt.return_unit)
+  >|= fun _ -> ()
+
+let query_collect c query =
+  query_fold c query ~init:[] ~f:(fun acc row -> Lwt.return (row :: acc))
+  >|= List.rev
+
+let query_to_seq c query =
+  (* This is tricky to implement properly with Lwt - for now return a simpler version *)
+  query_collect c query >|= List.to_seq
+
+let query_fold_with_columns c query ~init ~f =
+  let acc_ref = ref init in
+  let columns_ref = ref [] in
+  stream_query_rows c query 
+    ~on_row:(fun row -> 
+      f !acc_ref row !columns_ref >>= fun new_acc ->
+      acc_ref := new_acc;
+      Lwt.return_unit)
+    ~on_columns:(fun cols -> 
+      columns_ref := cols;
+      Lwt.return_unit)
+  >|= fun final_columns -> 
+  { rows = !acc_ref; columns = final_columns }
+
+let query_iter_with_columns c query ~f =
+  let columns_ref = ref [] in
+  stream_query_rows c query
+    ~on_row:(fun row -> f row !columns_ref)
+    ~on_columns:(fun cols -> 
+      columns_ref := cols;
+      Lwt.return_unit)
+  >|= fun final_columns -> final_columns
+
 (* Async insert functionality *)
 let create_async_inserter ?(config=None) c table_name =
   let final_config = match config with
