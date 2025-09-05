@@ -65,6 +65,23 @@ let create ?(host="127.0.0.1") ?(port=Defines.default_port)
     compression;
   }
 
+let env_debug_enabled () =
+  match Sys.getenv_opt "PROTON_DEBUG" with
+  | Some ("1" | "true" | "TRUE" | "yes" | "YES") -> true
+  | _ -> false
+
+let debugf fmt =
+  if env_debug_enabled () then Printf.printf fmt else Printf.ifprintf stdout fmt
+
+let hex_of_string s =
+  let b = Bytes.unsafe_of_string s in
+  let len = Bytes.length b in
+  let buf = Buffer.create (2 * len) in
+  for i = 0 to len - 1 do
+    Buffer.add_string buf (Printf.sprintf "%02x" (Char.code (Bytes.get b i)))
+  done;
+  Buffer.contents buf
+
 let read_file path =
   let ic = open_in_bin path in
   let len = in_channel_length ic in
@@ -154,7 +171,9 @@ let connect t =
   in
   get_addr t.host >>= fun addr ->
   let sockaddr = Unix.ADDR_INET (addr, t.port) in
-  Lwt_unix.connect fd sockaddr >>= fun () ->
+  debugf "[proton] connect: %s:%d (addr=%s)\n" t.host t.port (Unix.string_of_inet_addr addr);
+  Lwt_unix.with_timeout Defines.dbms_default_connect_timeout_sec (fun () -> Lwt_unix.connect fd sockaddr) >>= fun () ->
+  debugf "[proton] connect: socket connected\n";
   (if t.tls_config.enable_tls then
      let open Tls in
      let authenticator =
@@ -179,7 +198,7 @@ let connect t =
       | Ok raw -> let h = Domain_name.host_exn raw in Tls_lwt.Unix.client_of_fd config ~host:h fd
       | Error _ -> Tls_lwt.Unix.client_of_fd config fd) >|= fun tls -> `Tls (fd, tls)
    else Lwt.return (`Fd fd)) >>= function
-  | `Tls (fd', tls) -> t.tls <- Some tls; t.fd <- Some fd'; t.connected <- true; Lwt.return_unit
+  | `Tls (fd', tls) -> t.tls <- Some tls; t.fd <- Some fd'; t.connected <- true; debugf "[proton] TLS handshake complete\n"; Lwt.return_unit
   | `Fd fd' -> t.fd <- Some fd'; t.connected <- true; Lwt.return_unit
 
 let disconnect t =
@@ -204,6 +223,8 @@ let send_hello t =
   let buf = Buffer.create 256 in
   write_varint_int_to_buffer buf (client_packet_to_int Hello);
   let s = Defines.dbms_name ^ " " ^ Defines.client_name in
+  debugf "[proton] send_hello: client_name='%s' maj=%d min=%d rev=%d db='%s' user='%s' pw_len=%d\n"
+    s Defines.client_version_major Defines.client_version_minor Defines.client_revision t.database t.user (String.length t.password);
   write_varint_int_to_buffer buf (String.length s); Buffer.add_string buf s;
   write_varint_int_to_buffer buf Defines.client_version_major;
   write_varint_int_to_buffer buf Defines.client_version_minor;
@@ -211,6 +232,8 @@ let send_hello t =
   write_varint_int_to_buffer buf (String.length t.database); Buffer.add_string buf t.database;
   write_varint_int_to_buffer buf (String.length t.user); Buffer.add_string buf t.user;
   write_varint_int_to_buffer buf (String.length t.password); Buffer.add_string buf t.password;
+  let payload = Buffer.contents buf in
+  debugf "[proton] send_hello: bytes=%s\n" (hex_of_string payload);
   write_buf writev_fn buf
 
 let receive_hello t =
@@ -219,7 +242,9 @@ let receive_hello t =
     | None, Some fd -> (fun b o l -> Lwt_unix.read fd b o l)
     | _ -> fun _ _ _ -> Lwt.fail (Failure "not connected")
   in
-  read_varint_int_lwt read_fn >>= fun p ->
+  debugf "[proton] receive_hello: waiting for server hello...\n";
+  Lwt_unix.with_timeout Defines.dbms_default_sync_request_timeout_sec (fun () -> read_varint_int_lwt read_fn) >>= fun p ->
+  debugf "[proton] receive_hello: server packet=%d\n" p;
   match Protocol.server_packet_of_int p with
   | SHello ->
       read_str_lwt read_fn >>= fun server_name ->
@@ -234,14 +259,18 @@ let receive_hello t =
          read_varint_int_lwt read_fn else Lwt.return server_revision) >>= fun version_patch ->
       let si = { Context.name = server_name; version_major; version_minor; version_patch;
                  revision = server_revision; timezone = (match server_timezone with Some tz -> Some tz | None -> None); display_name = server_display_name } in
+      debugf "[proton] receive_hello: name='%s' ver=%d.%d.%d rev=%d tz=%s display='%s'\n"
+        server_name version_major version_minor version_patch server_revision
+        (match si.timezone with Some tz -> tz | None -> "-") server_display_name;
       t.srv <- Some si; t.ctx.server_info <- Some si; Lwt.return_unit
   | SException -> Lwt.fail (Failure "Server exception in hello")
   | _other -> Lwt.fail (Unexpected_packet (Printf.sprintf "Expected HELLO, got %d" p))
 
 let force_connect t =
   (if not t.connected then connect t else Lwt.return_unit) >>= fun () ->
-  send_hello t >>= fun () ->
-  receive_hello t
+  match t.srv with
+  | Some _ -> Lwt.return_unit
+  | None -> send_hello t >>= fun () -> receive_hello t
 
 (* Send a data block *)
 let send_data_block t (block: Block.t) =
@@ -251,35 +280,40 @@ let send_data_block t (block: Block.t) =
     | None, Some fd -> (fun ss -> Lwt_list.iter_s (fun s -> Lwt_unix.write_string fd s 0 (String.length s) >|= ignore) ss)
     | _ -> failwith "not connected"
   in
-  let buf = Buffer.create 4096 in
-  
-  (* Write Data packet header *)
-  Binary_writer.write_varint_to_buffer buf (Protocol.client_packet_to_int Protocol.Data);
-  
-  (* Write table name - empty string for inserts *)
-  Binary_writer.write_string_to_buffer buf "";
-  
+  (* Build block payload (info + columns + rows) in a separate buffer. *)
+  let buf_block = Buffer.create 4096 in
   (* Write block info *)
   let revision = match t.srv with Some s -> s.revision | None -> failwith "no server revision" in
   if revision >= Defines.dbms_min_revision_with_block_info then
-    Binary_writer.write_block_info_to_buffer buf block.info;
+    Binary_writer.write_block_info_to_buffer buf_block block.info;
   
   (* Write block data *)
-  Binary_writer.write_varint_to_buffer buf (List.length block.columns);  (* n_columns *)
-  Binary_writer.write_varint_to_buffer buf block.n_rows;                 (* n_rows *)
+  Binary_writer.write_varint_to_buffer buf_block (List.length block.columns);  (* n_columns *)
+  Binary_writer.write_varint_to_buffer buf_block block.n_rows;                 (* n_rows *)
   
   (* Write each column *)
   List.iter (fun col ->
-    Binary_writer.write_string_to_buffer buf col.Block.name;
-    Binary_writer.write_string_to_buffer buf col.Block.type_spec;
+    Binary_writer.write_string_to_buffer buf_block col.Block.name;
+    Binary_writer.write_string_to_buffer buf_block col.Block.type_spec;
     
     (* Write column data *)
     for i = 0 to Array.length col.Block.data - 1 do
-      Binary_writer.write_value_to_buffer buf col.Block.data.(i)
+      Binary_writer.write_value_to_buffer buf_block col.Block.data.(i)
     done
   ) block.columns;
-  
-  write_buf writev_fn buf
+  (* Send packet header and table name (uncompressed) *)
+  let hdr = Buffer.create 32 in
+  Binary_writer.write_varint_to_buffer hdr (Protocol.client_packet_to_int Protocol.Data);
+  Binary_writer.write_string_to_buffer hdr "";
+  write_buf writev_fn hdr >>= fun () ->
+  (* Send block payload (compressed if enabled) *)
+  let payload = Buffer.contents buf_block in
+  match t.compression with
+  | Compress.None -> writev_fn [payload]
+  | cmpr ->
+      let frame = Compress.build_compressed_frame (Bytes.unsafe_of_string payload) cmpr in
+      let s = Bytes.unsafe_to_string frame in
+      writev_fn [s]
 
 let send_query t ?(query_id="") (query:string) =
   force_connect t >>= fun () ->
@@ -309,7 +343,13 @@ let send_query t ?(query_id="") (query:string) =
     if revision >= Defines.dbms_min_revision_with_quota_key_in_client_info then write_varint_int_to_buffer buf 0;
     if revision >= Defines.dbms_min_protocol_version_with_distributed_depth then write_varint_int_to_buffer buf 0;
     if revision >= Defines.dbms_min_revision_with_version_patch then write_varint_int_to_buffer buf Defines.client_version_patch;
-    if revision >= Defines.dbms_min_revision_with_opentelemetry then Buffer.add_char buf (Char.chr 0)
+    if revision >= Defines.dbms_min_revision_with_opentelemetry then Buffer.add_char buf (Char.chr 0);
+    if revision >= Defines.dbms_min_revision_with_parallel_replicas then (
+      (* collaborate_with_initiator, count_participating_replicas, number_of_current_replica *)
+      write_varint_int_to_buffer buf 0;
+      write_varint_int_to_buffer buf 0;
+      write_varint_int_to_buffer buf 0
+    )
   end;
   let settings_as_strings = match t.srv with Some s -> s.revision >= Defines.dbms_min_revision_with_settings_serialized_as_strings | None -> true in
   if settings_as_strings then write_settings_as_strings buf t.ctx.settings ~settings_is_important:false else write_varint_int_to_buffer buf 0;
@@ -317,7 +357,10 @@ let send_query t ?(query_id="") (query:string) =
   write_varint_int_to_buffer buf (qps_to_int Complete);
   write_varint_int_to_buffer buf (compression_to_int t.compression);
   write_varint_int_to_buffer buf (String.length query); Buffer.add_string buf query;
-  write_buf writev_fn buf
+  write_buf writev_fn buf >>= fun () ->
+  (* Per Proton/ClickHouse protocol, send an empty Data block to indicate no external tables / end of data. *)
+  let empty_block = { Block.info = { Block_info.is_overflows=false; bucket_num = -1 }; columns = []; n_rows = 0 } in
+  send_data_block t empty_block
 
 let read_progress t read_fn =
   read_varint_int_lwt read_fn >>= fun _rows ->
@@ -339,7 +382,6 @@ let read_compressed_block_lwt read_fn : bytes Lwt.t =
   let header_len = header_size in
   lwt_read_exact read_fn header_len >>= fun header ->
   let method_byte = Char.code (Bytes.get header checksum_size) in
-  if method_byte <> method_to_byte LZ4 then Lwt.fail (Failure "Expected LZ4 method") else
   let compressed_size = Binary.bytes_get_int32_le header (checksum_size + 1) |> Int32.to_int in
   let uncompressed_size = Binary.bytes_get_int32_le header (checksum_size + 5) |> Int32.to_int in
   let payload_size = compressed_size - compress_header_size in
@@ -349,8 +391,60 @@ let read_compressed_block_lwt read_fn : bytes Lwt.t =
   Bytes.blit payload 0 checksum_input compress_header_size payload_size;
   let calculated_checksum = Cityhash.cityhash128 checksum_input |> Cityhash.to_bytes in
   let received_checksum = Bytes.sub header 0 checksum_size in
-  if not (Bytes.equal calculated_checksum received_checksum) then Lwt.fail (Compression_error "LZ4 checksum verification failed")
-  else Lwt.return (decompress_lz4 payload uncompressed_size)
+  if not (Bytes.equal calculated_checksum received_checksum) then Lwt.fail (Compression_error "Compression checksum verification failed")
+  else (
+    match method_of_byte method_byte with
+    | None -> Lwt.return payload
+    | LZ4 -> Lwt.return (decompress_lz4 payload uncompressed_size)
+    | ZSTD -> Lwt.return (decompress_zstd payload uncompressed_size)
+  )
+
+let read_uncompressed_block_lwt read_fn : bytes Lwt.t =
+  let buf = Buffer.create 4096 in
+  let write_varint n = write_varint_int_to_buffer buf n in
+  let write_bytes b = Buffer.add_bytes buf b in
+  let read_and_copy_varint () = read_varint_int_lwt read_fn >|= fun v -> write_varint v; v in
+  let read_and_copy_bytes len = lwt_read_exact read_fn len >|= fun b -> write_bytes b; b in
+  let read_and_copy_str () = read_varint_int_lwt read_fn >>= fun len -> write_varint len; if len = 0 then Lwt.return "" else lwt_read_exact read_fn len >|= fun b -> let s = Bytes.to_string b in Buffer.add_string buf s; s in
+  (* BlockInfo *)
+  let rec copy_block_info () =
+    read_and_copy_varint () >>= fun field ->
+    if field = 0 then Lwt.return_unit
+    else if field = 1 then read_and_copy_bytes 1 >>= fun _ -> copy_block_info ()
+    else if field = 2 then read_and_copy_bytes 4 >>= fun _ -> copy_block_info ()
+    else copy_block_info ()
+  in
+  copy_block_info () >>= fun () ->
+  (* n_columns, n_rows *)
+  read_and_copy_varint () >>= fun n_columns ->
+  read_and_copy_varint () >>= fun n_rows ->
+  let rec copy_columns i =
+    if i = n_columns then Lwt.return_unit else
+    read_and_copy_str () >>= fun _col_name ->
+    read_and_copy_str () >>= fun col_type ->
+    let t = String.lowercase_ascii (String.trim col_type) in
+    let fixed_bytes_per_row =
+      if t = "uint8" || t = "int8" || String.length t >= 6 && String.sub t 0 6 = "enum8(" then Some 1 else
+      if t = "uint16" || t = "int16" || String.length t >= 7 && String.sub t 0 7 = "enum16(" then Some 2 else
+      if t = "uint32" || t = "int32" || t = "float32" || t = "datetime" then Some 4 else
+      if t = "uint64" || t = "int64" || t = "float64" || String.length t >= 9 && String.sub t 0 9 = "datetime64" then Some 8 else
+      None
+    in
+    (match fixed_bytes_per_row with
+     | Some sz -> read_and_copy_bytes (sz * n_rows) >|= fun _ -> ()
+     | None ->
+         if t = "string" || t = "json" then (
+           let rec loop r =
+             if r = n_rows then Lwt.return_unit
+             else read_and_copy_str () >>= fun _ -> loop (r+1)
+           in loop 0
+         ) else (
+           Lwt.fail (Failure (Printf.sprintf "unsupported uncompressed column type: %s" col_type))
+         )) >>= fun () ->
+    copy_columns (i+1)
+  in
+  copy_columns 0 >>= fun () ->
+  Lwt.return (Buffer.to_bytes buf)
 
 let rec read_all_remaining read_fn acc =
   (* Helper to read all remaining data from stream into accumulator *)
@@ -363,19 +457,17 @@ let rec read_all_remaining read_fn acc =
     read_all_remaining read_fn acc
   )
 
-let receive_data t ~raw read_fn : Block.t Lwt.t =
+let receive_data_block t ~compressible read_fn : Block.t Lwt.t =
   let revision = match t.srv with Some s -> s.revision | None -> 0 in
-  (* Always buffer the block data and use the sync parser - this eliminates duplication *)
-  if raw || t.compression = Compress.None then (
-    (* Uncompressed block: buffer and parse *)
-    let buf = Buffer.create 8192 in
-    read_all_remaining read_fn buf >>= fun buf ->
-    let bytes = Buffer.to_bytes buf in
-    let br = Buffered_reader.create_from_bytes bytes in
-    Lwt.return (Block.read_block_br ~revision br)
-  ) else (
+  (* Server sends table name string before block. Discard it. *)
+  read_str_lwt read_fn >>= fun _table_name ->
+  if compressible && t.compression <> Compress.None then (
     read_compressed_block_lwt read_fn >>= fun decompressed ->
     let br = Buffered_reader.create_from_bytes decompressed in
+    Lwt.return (Block.read_block_br ~revision br)
+  ) else (
+    read_uncompressed_block_lwt read_fn >>= fun bytes ->
+    let br = Buffered_reader.create_from_bytes bytes in
     Lwt.return (Block.read_block_br ~revision br)
   )
 
@@ -387,7 +479,7 @@ let receive_packet t : packet Lwt.t =
   in
   read_varint_int_lwt read_fn >>= fun ptype ->
   match Protocol.server_packet_of_int ptype with
-  | SData -> receive_data t ~raw:false read_fn >|= fun b -> PData b
+  | SData -> receive_data_block t ~compressible:true read_fn >|= fun b -> PData b
   | SException ->
       let rec read_exception_lwt () =
         read_int32_le_lwt read_fn >>= fun code32 ->
@@ -409,12 +501,13 @@ let receive_packet t : packet Lwt.t =
   | SProgress -> read_progress t read_fn >|= fun () -> PProgress
   | SEndOfStream -> Lwt.return PEndOfStream
   | SProfileInfo -> read_profile_info t read_fn >|= fun () -> PProfileInfo
-  | STotals -> receive_data t ~raw:false read_fn >|= fun b -> PTotals b
-  | SExtremes -> receive_data t ~raw:false read_fn >|= fun b -> PExtremes b
-  | SLog -> receive_data t ~raw:true read_fn >|= fun b -> PLog b
+  | STotals -> receive_data_block t ~compressible:true read_fn >|= fun b -> PTotals b
+  | SExtremes -> receive_data_block t ~compressible:true read_fn >|= fun b -> PExtremes b
+  | SLog -> receive_data_block t ~compressible:false read_fn >|= fun b -> PLog b
   | STableColumns -> read_str_lwt read_fn >>= fun _ -> read_str_lwt read_fn >|= fun _ -> PProgress
-  | SPartUUIDs | SReadTaskRequest | SProfileEvents -> receive_data t ~raw:false read_fn >|= fun _ -> PProgress
-  | SHello | SPong | STablesStatusResponse -> receive_data t ~raw:false read_fn >|= fun _ -> PProgress
+  | SPartUUIDs | SReadTaskRequest -> receive_data_block t ~compressible:true read_fn >|= fun _ -> PProgress
+  | SProfileEvents -> receive_data_block t ~compressible:false read_fn >|= fun _ -> PProgress
+  | SHello | SPong | STablesStatusResponse -> Lwt.return PProgress
 
 let read_exception_from_bytes (bs:bytes) : exn Lwt.t =
   let pos = ref 0 in
