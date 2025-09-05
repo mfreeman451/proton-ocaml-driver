@@ -8,6 +8,8 @@ type value =
   | VFloat64 of float
   | VDateTime of int64 * string option
   | VDateTime64 of int64 * int * string option
+  | VEnum8 of string * int  (* name, value *)
+  | VEnum16 of string * int (* name, value *)
   | VArray of value list
   | VMap of (value * value) list
   | VTuple of value list
@@ -26,6 +28,8 @@ let rec value_to_string = function
   | VDateTime64 (value, precision, tz) ->
       let tz_str = match tz with Some z -> " " ^ z | None -> "" in
       Printf.sprintf "%Ld(p=%d)%s" value precision tz_str
+  | VEnum8 (name, _) -> name
+  | VEnum16 (name, _) -> name
   | VArray values ->
       let elements = List.map value_to_string values in
       "[" ^ String.concat "," elements ^ "]"
