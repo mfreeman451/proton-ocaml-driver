@@ -10,7 +10,7 @@ exception Checksum_mismatch of string
 type method_t = 
   | None   (** No compression *)
   | LZ4    (** LZ4 compression *)
-  | ZSTD   (** ZSTD compression (not yet implemented) *)
+  | ZSTD   (** ZSTD compression *)
 
 (** Convert compression method to byte value used in protocol *)
 val method_to_byte : method_t -> int
@@ -31,6 +31,12 @@ val compress_lz4 : bytes -> bytes
 
 (** Decompress LZ4 data with known uncompressed size *)
 val decompress_lz4 : bytes -> int -> bytes
+
+(** Compress data using ZSTD *)
+val compress_zstd : bytes -> bytes
+
+(** Decompress ZSTD data with known uncompressed size *)
+val decompress_zstd : bytes -> int -> bytes
 
 (** Write a compressed block to output channel with proper ClickHouse framing *)
 val write_compressed_block : out_channel -> bytes -> method_t -> unit

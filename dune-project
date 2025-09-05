@@ -9,6 +9,7 @@
  (depends 
   (ocaml (>= 4.14.0))
   lz4
+  zstd
   lwt
   tls
   tls-lwt
