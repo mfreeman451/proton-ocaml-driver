@@ -25,7 +25,7 @@ fi
 
 # Set up OCaml environment
 echo "🐪 Setting up OCaml environment..."
-eval $(opam env --switch=5.1)
+eval $(opam env)
 
 # Test basic connectivity
 echo "🔌 Testing basic connectivity..."
