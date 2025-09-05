@@ -1,14 +1,16 @@
 let () =
   let open Proton in
+  Lwt_main.run @@ let open Lwt.Infix in
   let client = Client.create ~host:"127.0.0.1" ~port:Defines.default_port () in
-  match Client.execute client "SELECT 1 AS x, 'hello' AS s, toFloat64(3.14) AS f" with
+  Client.execute client "SELECT 1 AS x, 'hello' AS s, toFloat64(3.14) AS f" >>= function
   | Client.NoRows ->
-      print_endline "No rows returned."
+      Lwt_io.printl "No rows returned." >>= fun () ->
+      Client.disconnect client
   | Client.Rows (rows, columns) ->
       let cols = String.concat ", " (List.map fst columns) in
-      Printf.printf "Columns: %s\n" cols;
-      List.iter (fun row ->
+      Lwt_io.printf "Columns: %s\n" cols >>= fun () ->
+      Lwt_list.iter_s (fun row ->
         let cells = row |> List.map Columns.value_to_string |> String.concat " | " in
-        Printf.printf "Row: %s\n" cells
-      ) rows;
-  Client.disconnect client
+        Lwt_io.printf "Row: %s\n" cells
+      ) rows >>= fun () ->
+      Client.disconnect client

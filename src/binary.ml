@@ -76,7 +76,7 @@ let really_input_bytes_br br n =
   Buffered_reader.really_input br buf 0 n;
   buf
 
-let read_uint8_br br = Buffered_reader.input_byte br
+(* keep read_uint8_br as alias *)
 
 let read_int32_le_br br =
   let a = Buffered_reader.input_byte br in
@@ -97,6 +97,11 @@ let read_uint64_le_br br =
   Int64.logor 
     (Int64.logand (Int64.of_int32 low) 0xFFFFFFFFL)
     (Int64.shift_left (Int64.of_int32 high) 32)
+
+let read_int64_le_br br =
+  let low = read_int32_le_br br in
+  let high = read_int32_le_br br in
+  Int64.logor (Int64.of_int32 low) (Int64.shift_left (Int64.of_int32 high) 32)
 
 let read_float64_le_br br =
   let bits = read_uint64_le_br br in
@@ -152,3 +157,20 @@ let bytes_set_int64_le buf offset v =
   let high = Int64.to_int (Int64.shift_right_logical v 32) in
   bytes_set_int32_le buf offset (Int32.of_int low);
   bytes_set_int32_le buf (offset + 4) (Int32.of_int high)
+let read_int16_le ic =
+  let a = input_byte ic in
+  let b = input_byte ic in
+  let v = a lor (b lsl 8) in
+  if v land 0x8000 <> 0 then Int32.of_int (v - 0x10000) else Int32.of_int v
+
+let read_int16_le_br br =
+  let a = Buffered_reader.input_byte br in
+  let b = Buffered_reader.input_byte br in
+  let v = a lor (b lsl 8) in
+  if v land 0x8000 <> 0 then Int32.of_int (v - 0x10000) else Int32.of_int v
+
+let read_uint8_br br = Buffered_reader.input_byte br
+let read_int64_le ic =
+  let low = read_int32_le ic in
+  let high = read_int32_le ic in
+  Int64.logor (Int64.of_int32 low) (Int64.shift_left (Int64.of_int32 high) 32)

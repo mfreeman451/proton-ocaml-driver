@@ -1,0 +1,25 @@
+(version 2.0.2)
+
+(build
+ (progn
+  (when
+   %{pkg-self:dev}
+   (run dune subst))
+  (run dune build -p %{pkg-self:name} -j %{jobs})))
+
+(depends
+ conf-gmp-powm-sec
+ ocaml
+ dune
+ mirage-crypto
+ mirage-crypto-rng
+ digestif
+ zarith
+ eqaf)
+
+(source
+ (fetch
+  (url
+   https://github.com/mirage/mirage-crypto/releases/download/v2.0.2/mirage-crypto-2.0.2.tbz)
+  (checksum
+   sha256=739a9d39f34027fbc93557f87c5cac4190a52bddadff72f212faa803d6215874)))

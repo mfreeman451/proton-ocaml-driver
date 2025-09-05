@@ -38,6 +38,9 @@ val write_compressed_block : out_channel -> bytes -> method_t -> unit
 (** Read a compressed block from input channel and decompress it *)
 val read_compressed_block : in_channel -> method_t -> bytes
 
+(** Read a compressed block from buffered reader and decompress it *)
+val read_compressed_block_br : Buffered_reader.t -> method_t -> bytes
+
 (** Streaming decompression reader *)
 type reader
 

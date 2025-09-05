@@ -1,7 +1,11 @@
 (executable
  (name query)
- (libraries proton))
+ (libraries proton lwt.unix))
 
 (executable
  (name compression_example)
- (libraries proton))
+ (libraries proton lwt.unix))
+
+(executable
+ (name tls_example)
+ (libraries proton lwt lwt.unix))

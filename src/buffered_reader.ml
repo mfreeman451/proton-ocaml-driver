@@ -43,7 +43,7 @@ let create_from_bytes (src:bytes) =
     fill_func;
   }
 
-(* Removed compression reader variant to avoid module cycles; create from bytes instead *)
+(* Note: TLS is handled in async path. For parsing bytes, use create_from_bytes. *)
 
 (* Fill buffer with more data *)
 let fill_buffer br =

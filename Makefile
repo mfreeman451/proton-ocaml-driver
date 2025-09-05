@@ -5,53 +5,52 @@ all: build
 
 # Build the library
 build:
-	dune build @all
+	opam exec -- dune build @all
 
 # Run all tests (always shows output)  
 test:
-	@dune build test/test_suite.exe
-	@./_build/default/test/test_suite.exe
+	@opam exec -- dune exec test_lwt/test_suite_lwt.exe
 
 # Run tests silently (only shows failures)
 test-silent:
-	@dune test
+	@opam exec -- dune test
 
 # Run tests with verbose output
 test-verbose:
-	@dune test --verbose
+	@opam exec -- dune test --verbose
 
 # Clean build artifacts  
 clean:
-	dune clean
+	opam exec -- dune clean
 
 # Install the library locally
 install:
-	dune install
+	opam exec -- dune install
 
 # Build documentation
 doc:
-	dune build @doc
+	opam exec -- dune build @doc
 
 # Run the example query
 example:
-	@dune exec examples/query
+	@opam exec -- dune exec examples/query
 
 # Run the compression example
 compression-example:
-	@dune exec examples/compression_example
+	@opam exec -- dune exec examples/compression_example
 
 # Format code
 format:
-	dune build @fmt --auto-promote
+	opam exec -- dune build @fmt --auto-promote
 
 # Check code formatting
 check-format:
-	dune build @fmt
+	opam exec -- dune build @fmt
 
 # Development watch mode - rebuilds on file changes
 watch:
-	dune build @all --watch
+	opam exec -- dune build @all --watch
 
 # Run tests in watch mode
 test-watch:
-	dune test --watch
+	opam exec -- dune test --watch
