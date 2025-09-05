@@ -77,45 +77,66 @@ let create config connection =
     flush_promise = None;
   }
 
-(* Send a batch to the database *)
+(* Send a batch to the database using binary Data packet protocol *)
 let send_batch inserter (rows: value list list) (columns: (string * string) list) =
   let rec retry_send attempt =
     if attempt > inserter.config.max_retries then
       Lwt.fail_with (Printf.sprintf "Failed to insert batch after %d retries" inserter.config.max_retries)
     else
-      let insert_query = Printf.sprintf "INSERT INTO %s VALUES" inserter.config.table_name in
       Lwt.catch
         (fun () ->
-          (* For now, we'll convert to a simple INSERT query *)
-          (* In a real implementation, we'd use the Data packet protocol *)
-          let values_str = List.map (fun row ->
-            "(" ^ String.concat "," (List.map (fun v ->
-              match v with
-              | VNull -> "NULL"
-              | VString s -> "'" ^ String.escaped s ^ "'"
-              | VInt32 i -> Int32.to_string i
-              | VUInt32 i -> Int32.to_string i
-              | VInt64 i -> Int64.to_string i
-              | VUInt64 i -> Int64.to_string i
-              | VFloat64 f -> string_of_float f
-              | VDateTime (ts, _) -> Int64.to_string ts
-              | VDateTime64 (value, _, _) -> Int64.to_string value
-              | VEnum8 (name, _) -> "'" ^ String.escaped name ^ "'"
-              | VEnum16 (name, _) -> "'" ^ String.escaped name ^ "'"
-              | VArray _ -> "'[]'"  (* Simplified for now *)
-              | VMap _ -> "'{}'"    (* Simplified for now *)
-              | VTuple _ -> "'()'"  (* Simplified for now *)
-            ) row) ^ ")"
-          ) rows in
-          let full_query = insert_query ^ " " ^ String.concat "," values_str in
-          Connection.send_query inserter.connection full_query >>= fun () ->
-          (* Read response packets until end of stream *)
-          let rec read_response () =
-            Connection.receive_packet inserter.connection >>= function
-            | PEndOfStream -> Lwt.return_unit
-            | _ -> read_response ()
-          in
-          read_response ())
+          (* Send INSERT query first to prepare for data *)
+          let insert_query = Printf.sprintf "INSERT INTO %s VALUES" inserter.config.table_name in
+          Connection.send_query inserter.connection insert_query >>= fun () ->
+          
+          (* Read the first block (should be a header block with column info) *)
+          Connection.receive_packet inserter.connection >>= function
+          | PData header_block ->
+              (* Create data block from our rows *)
+              let n_rows = List.length rows in
+              let n_cols = List.length columns in
+              
+              (* Convert rows to column-oriented data *)
+              let column_data = Array.make n_cols [||] in
+              List.iteri (fun col_idx (_, _) ->
+                let col_values = Array.make n_rows (VString "") in
+                List.iteri (fun row_idx row ->
+                  if col_idx < List.length row then
+                    col_values.(row_idx) <- List.nth row col_idx
+                ) rows;
+                column_data.(col_idx) <- col_values
+              ) columns;
+              
+              (* Build block columns *)
+              let block_columns = List.mapi (fun i (name, type_spec) ->
+                { Block.name; type_spec; data = column_data.(i) }
+              ) columns in
+              
+              let data_block = {
+                Block.info = { Block_info.is_overflows = false; bucket_num = -1 };
+                columns = block_columns;
+                n_rows = n_rows;
+              } in
+              
+              (* Send the data block *)
+              Connection.send_data_block inserter.connection data_block >>= fun () ->
+              
+              (* Send empty block to signal end *)
+              let empty_block = {
+                Block.info = { Block_info.is_overflows = false; bucket_num = -1 };
+                columns = [];
+                n_rows = 0;
+              } in
+              Connection.send_data_block inserter.connection empty_block >>= fun () ->
+              
+              (* Read response packets until end of stream *)
+              let rec read_response () =
+                Connection.receive_packet inserter.connection >>= function
+                | PEndOfStream -> Lwt.return_unit
+                | _ -> read_response ()
+              in
+              read_response ()
+          | _ -> Lwt.fail_with "Expected header block after INSERT query")
         (fun exn ->
           Printf.printf "Insert attempt %d failed: %s\n" attempt (Printexc.to_string exn);
           let delay = inserter.config.retry_delay *. (float_of_int attempt) in

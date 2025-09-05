@@ -232,6 +232,44 @@ let force_connect t =
   send_hello t >>= fun () ->
   receive_hello t
 
+(* Send a data block *)
+let send_data_block t (block: Block.t) =
+  force_connect t >>= fun () ->
+  let writev_fn = match t.tls, t.fd with
+    | Some tls, _ -> (fun ss -> Tls_lwt.Unix.writev tls ss)
+    | None, Some fd -> (fun ss -> Lwt_list.iter_s (fun s -> Lwt_unix.write_string fd s 0 (String.length s) >|= ignore) ss)
+    | _ -> failwith "not connected"
+  in
+  let buf = Buffer.create 4096 in
+  
+  (* Write Data packet header *)
+  Binary_writer.write_varint_to_buffer buf (Protocol.client_packet_to_int Protocol.Data);
+  
+  (* Write table name - empty string for inserts *)
+  Binary_writer.write_string_to_buffer buf "";
+  
+  (* Write block info *)
+  let revision = match t.srv with Some s -> s.revision | None -> failwith "no server revision" in
+  if revision >= Defines.dbms_min_revision_with_block_info then
+    Binary_writer.write_block_info_to_buffer buf block.info;
+  
+  (* Write block data *)
+  Binary_writer.write_varint_to_buffer buf (List.length block.columns);  (* n_columns *)
+  Binary_writer.write_varint_to_buffer buf block.n_rows;                 (* n_rows *)
+  
+  (* Write each column *)
+  List.iter (fun col ->
+    Binary_writer.write_string_to_buffer buf col.Block.name;
+    Binary_writer.write_string_to_buffer buf col.Block.type_spec;
+    
+    (* Write column data *)
+    for i = 0 to Array.length col.Block.data - 1 do
+      Binary_writer.write_value_to_buffer buf col.Block.data.(i)
+    done
+  ) block.columns;
+  
+  write_buf writev_fn buf
+
 let send_query t ?(query_id="") (query:string) =
   force_connect t >>= fun () ->
   let writev_fn = match t.tls, t.fd with
