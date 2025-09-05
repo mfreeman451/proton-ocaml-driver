@@ -1,0 +1,17 @@
+(version 0.4)
+
+(build
+ (progn
+  (when
+   %{pkg-self:dev}
+   (run dune subst))
+  (run dune build -p %{pkg-self:name} -j %{jobs} @install)))
+
+(depends ocaml dune ctypes integers conf-zstd)
+
+(source
+ (fetch
+  (url
+   https://github.com/ygrek/ocaml-zstd/releases/download/v0.4/zstd-0.4.tbz)
+  (checksum
+   sha256=c1968643e295e94e04bd49efc7939f18c189abbbeb338b3b0f3688e9f2a90111)))

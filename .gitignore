@@ -41,3 +41,4 @@ proton-rust-client
 proton-go-driver
 
 .vscode
+dev-tools.lock

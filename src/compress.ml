@@ -38,6 +38,18 @@ let compress_lz4 (data : bytes) : bytes =
 let decompress_lz4 (data : bytes) (uncompressed_size : int) : bytes =
   LZ4.Bytes.decompress ~length:uncompressed_size data
 
+(* Compress data using ZSTD *)
+let compress_zstd (data : bytes) : bytes =
+  let data_str = Bytes.to_string data in
+  let compressed = Zstd.compress ~level:3 data_str in
+  Bytes.of_string compressed
+
+(* Decompress ZSTD data *)
+let decompress_zstd (data : bytes) (uncompressed_size : int) : bytes =
+  let data_str = Bytes.to_string data in
+  let decompressed = Zstd.decompress uncompressed_size data_str in
+  Bytes.of_string decompressed
+
 (* Write a compressed block to output channel *)
 let write_compressed_block oc (data : bytes) (method_ : method_t) =
   match method_ with
@@ -71,7 +83,31 @@ let write_compressed_block oc (data : bytes) (method_ : method_t) =
       output oc compressed_data 0 compressed_size;
       flush oc
   | ZSTD ->
-      failwith "ZSTD compression not implemented yet"
+      let uncompressed_size = Bytes.length data in
+      
+      (* Compress the data *)
+      let compressed_data = compress_zstd data in
+      let compressed_size = Bytes.length compressed_data in
+      
+      (* Create header: method (1) + compressed_size (4) + uncompressed_size (4) *)
+      let header = Bytes.create compress_header_size in
+      Bytes.set header 0 (Char.chr (method_to_byte ZSTD));
+      bytes_set_int32_le header 1 (Int32.of_int (compressed_size + compress_header_size));
+      bytes_set_int32_le header 5 (Int32.of_int uncompressed_size);
+      
+      (* Calculate checksum over header + compressed data *)
+      let checksum_input = Bytes.create (compress_header_size + compressed_size) in
+      Bytes.blit header 0 checksum_input 0 compress_header_size;
+      Bytes.blit compressed_data 0 checksum_input compress_header_size compressed_size;
+      
+      let hash = Cityhash.cityhash128 checksum_input in
+      let checksum = Cityhash.to_bytes hash in
+      
+      (* Write: checksum + header + compressed data *)
+      output oc checksum 0 checksum_size;
+      output oc header 0 compress_header_size;
+      output oc compressed_data 0 compressed_size;
+      flush oc
 
 (* Read a compressed block from input channel *)
 let read_compressed_block ic (method_ : method_t) : bytes =
@@ -119,7 +155,44 @@ let read_compressed_block ic (method_ : method_t) : bytes =
         (* Decompress *)
         decompress_lz4 compressed_data (Int32.to_int uncompressed_size)
   | ZSTD ->
-      failwith "ZSTD decompression not implemented yet"
+      (* Read header: checksum (16) + method (1) + compressed_size (4) + uncompressed_size (4) *)
+      let header = really_input_string ic header_size |> Bytes.of_string in
+      
+      (* Extract fields *)
+      let _checksum = Bytes.sub header 0 checksum_size in
+      let method_byte = Char.code (Bytes.get header checksum_size) in
+      let compressed_size = bytes_get_int32_le header (checksum_size + 1) in
+      let uncompressed_size = bytes_get_int32_le header (checksum_size + 5) in
+      
+      (* Verify method *)
+      if method_byte <> method_to_byte ZSTD then
+        failwith (Printf.sprintf "Expected ZSTD method, got 0x%02x" method_byte);
+      
+      (* Read compressed data *)
+      let compressed_data_size = Int32.to_int compressed_size - compress_header_size in
+      let compressed_data = really_input_string ic compressed_data_size |> Bytes.of_string in
+      
+      (* Verify checksum *)
+      let checksum_input = Bytes.create (compress_header_size + compressed_data_size) in
+      Bytes.blit header checksum_size checksum_input 0 compress_header_size;
+      Bytes.blit compressed_data 0 checksum_input compress_header_size compressed_data_size;
+      
+      let calculated_hash = Cityhash.cityhash128 checksum_input in
+      let calculated_checksum = Cityhash.to_bytes calculated_hash in
+      
+      let received_checksum = Bytes.sub header 0 checksum_size in
+      let hex_of_bytes bytes =
+        Bytes.to_string bytes 
+        |> String.fold_left (fun acc c -> acc ^ Printf.sprintf "%02x" (Char.code c)) ""
+      in
+      if not (Bytes.equal calculated_checksum received_checksum) then
+        raise (Checksum_mismatch 
+          (Printf.sprintf "ZSTD checksum verification failed: expected %s, got %s"
+            (hex_of_bytes received_checksum)
+            (hex_of_bytes calculated_checksum)))
+      else
+        (* Decompress *)
+        decompress_zstd compressed_data (Int32.to_int uncompressed_size)
 
 let read_compressed_block_br br (method_ : method_t) : bytes =
   match method_ with
@@ -147,7 +220,29 @@ let read_compressed_block_br br (method_ : method_t) : bytes =
         raise (Checksum_mismatch "LZ4 checksum verification failed (br)")
       else
         decompress_lz4 compressed_data (Int32.to_int uncompressed_size)
-  | ZSTD -> failwith "ZSTD decompression not implemented yet"
+  | ZSTD ->
+      let header = Bytes.create header_size in
+      Buffered_reader.really_input br header 0 header_size;
+      let method_byte = Char.code (Bytes.get header checksum_size) in
+      if method_byte <> method_to_byte ZSTD then
+        failwith (Printf.sprintf "Expected ZSTD method, got 0x%02x" method_byte);
+
+      let compressed_size = bytes_get_int32_le header (checksum_size + 1) in
+      let uncompressed_size = bytes_get_int32_le header (checksum_size + 5) in
+      let compressed_data_size = (Int32.to_int compressed_size) - compress_header_size in
+      let compressed_data = Bytes.create compressed_data_size in
+      Buffered_reader.really_input br compressed_data 0 compressed_data_size;
+
+      let checksum_input = Bytes.create (compress_header_size + compressed_data_size) in
+      Bytes.blit header checksum_size checksum_input 0 compress_header_size;
+      Bytes.blit compressed_data 0 checksum_input compress_header_size compressed_data_size;
+      let calculated_hash = Cityhash.cityhash128 checksum_input in
+      let calculated_checksum = Cityhash.to_bytes calculated_hash in
+      let received_checksum = Bytes.sub header 0 checksum_size in
+      if not (Bytes.equal calculated_checksum received_checksum) then
+        raise (Checksum_mismatch "ZSTD checksum verification failed (br)")
+      else
+        decompress_zstd compressed_data (Int32.to_int uncompressed_size)
 
 (* Reader type for streaming decompression *)
 type reader = {

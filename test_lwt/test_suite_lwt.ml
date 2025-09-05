@@ -303,6 +303,55 @@ let test_compression_method_decoding () =
   Alcotest.(check bool) "Decode LZ4" true (Compress.method_of_byte 0x82 = Compress.LZ4);
   Alcotest.(check bool) "Decode ZSTD" true (Compress.method_of_byte 0x90 = Compress.ZSTD)
 
+(* ZSTD compression tests *)
+let test_zstd_roundtrip () =
+  let test_cases = [
+    ("hello world", "small string");
+    ("The quick brown fox jumps over the lazy dog", "medium string");
+    (String.make 1000 'A', "highly compressible");
+    ("abcdefghijklmnopqrstuvwxyz0123456789", "alphanumeric");
+  ] in
+  
+  List.iter (fun (input, desc) ->
+    let original = Bytes.of_string input in
+    let compressed = Compress.compress_zstd original in
+    let decompressed = Compress.decompress_zstd compressed (Bytes.length original) in
+    Alcotest.(check string) (desc ^ " ZSTD roundtrip") input (Bytes.to_string decompressed)
+  ) test_cases
+
+let test_zstd_compression_ratio () =
+  let repetitive_data = String.make 10000 'A' in
+  let original = Bytes.of_string repetitive_data in
+  let compressed = Compress.compress_zstd original in
+  
+  let original_size = Bytes.length original in
+  let compressed_size = Bytes.length compressed in
+  
+  Printf.printf "ZSTD: Original size: %d, Compressed size: %d, Ratio: %.2f\n"
+    original_size compressed_size (float_of_int original_size /. float_of_int compressed_size);
+  
+  (* ZSTD should compress repetitive data very well - expect at least 10:1 ratio *)
+  Alcotest.(check bool) "ZSTD high compression ratio" true (compressed_size * 10 < original_size)
+
+let test_zstd_frame_format () =
+  let test_data = Bytes.of_string "Hello, ZSTD compression world!" in
+  let temp_file = Filename.temp_file "zstd_test" ".bin" in
+  
+  (* Write compressed block to file *)
+  let oc = open_out_bin temp_file in
+  Compress.write_compressed_block oc test_data Compress.ZSTD;
+  close_out oc;
+  
+  (* Read it back *)
+  let ic = open_in_bin temp_file in
+  let decompressed = Compress.read_compressed_block ic Compress.ZSTD in
+  close_in ic;
+  
+  Alcotest.(check string) "ZSTD frame format roundtrip" 
+    (Bytes.to_string test_data) (Bytes.to_string decompressed);
+  
+  Sys.remove temp_file
+
 (* Binary encoding tests *)
 let test_int32_roundtrip () =
   let test_values = [0l; 1l; -1l; Int32.max_int; Int32.min_int; 0x12345678l] in
@@ -691,8 +740,11 @@ let () =
     ("Compression", [
       Alcotest.test_case "LZ4 roundtrip" `Quick test_lz4_roundtrip;
       Alcotest.test_case "LZ4 compression ratio" `Quick test_lz4_compression_ratio;
+      Alcotest.test_case "ZSTD roundtrip" `Quick test_zstd_roundtrip;
+      Alcotest.test_case "ZSTD compression ratio" `Quick test_zstd_compression_ratio;
       Alcotest.test_case "Frame format" `Quick test_compression_frame_format;
       Alcotest.test_case "Checksum verification" `Quick test_checksum_verification;
+      Alcotest.test_case "ZSTD frame format" `Quick test_zstd_frame_format;
       Alcotest.test_case "Method encoding" `Quick test_compression_method_encoding;
       Alcotest.test_case "Method decoding" `Quick test_compression_method_decoding;
     ]);
