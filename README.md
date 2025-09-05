@@ -141,3 +141,30 @@ Run with:
 ```bash
 make test
 ```
+
+### VSCode
+
+**Avoid Intellisense errors with the CPP FFI stubs**
+
+Mac users, add this to `.vscode/c_cpp_properties.json`:
+
+```json
+{
+    "configurations": [
+        {
+            "name": "Mac",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "~/.opam/default/lib/ocaml/**"
+            ],
+            "defines": [],
+            "macFrameworkPath": [],
+            "compilerPath": "/usr/bin/clang",
+            "cStandard": "c17",
+            "cppStandard": "c++14",
+            "intelliSenseMode": "macos-clang-x64"
+        }
+    ],
+    "version": 4
+}
+```

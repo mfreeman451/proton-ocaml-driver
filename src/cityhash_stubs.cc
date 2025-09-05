@@ -1,5 +1,5 @@
 // OCaml bindings for CityHash128
-// We'll include a minimal implementation based on the Google CityHash code
+// This is a minimal implementation based on the Google CityHash code
 
 #include <caml/mlvalues.h>
 #include <caml/memory.h>
@@ -8,9 +8,6 @@
 #include <cstdint>
 #include <cstring>
 #include <utility>
-
-// CityHash128 implementation from Google's CityHash
-// This is a simplified version for ClickHouse compatibility
 
 typedef std::pair<uint64_t, uint64_t> uint128;
 
