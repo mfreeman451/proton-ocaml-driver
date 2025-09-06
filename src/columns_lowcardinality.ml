@@ -12,9 +12,9 @@ let reader_lowcardinality_of_spec ~(resolver:(string -> (in_channel -> int -> va
     Some (fun ic n ->
       let index_ser = read_uint64_le ic in
       let key_type = Int64.to_int (Int64.logand index_ser 0xFFL) in
-      let index_rows = read_int64_le ic |> Int64.to_int in
+      let index_rows = read_uint64_le ic |> Int64.to_int in
       let dict = if index_rows > 0 then dict_reader ic index_rows else [||] in
-      let keys_rows = read_int64_le ic |> Int64.to_int in
+      let keys_rows = read_uint64_le ic |> Int64.to_int in
       let read_key () = match key_type with
         | 0 -> input_byte ic
         | 1 -> Binary.read_int16_le ic |> Int32.to_int
