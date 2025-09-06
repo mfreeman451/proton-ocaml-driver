@@ -469,9 +469,32 @@ let run_live_tests () =
     
     printf "\n[TEST 2.1] Unbounded streaming query (first 3 rows)\n";
     printf "──────────────────────────────────────────────────\n";
-    printf "Note: This simulates a streaming query that would continue indefinitely\n\n";
+    printf "Note: This demonstrates live streaming - starting reader, then inserting data\n\n";
     
     let conn2 = Connection.create ~host:"127.0.0.1" ~port:8463 ~compression:Compress.None ~settings () in
+    
+    (* Start the unbounded query FIRST *)
+    let query = sprintf "SELECT id, name, age, balance, bignum, created FROM %s" table_name in
+    printf "[DEBUG] Starting unbounded streaming: %s\n%!" query;
+    let* () = Connection.send_query conn2 query in
+    
+    (* Now insert some data for the stream to capture *)
+    printf "[DEBUG] Inserting data for unbounded stream...\n%!";
+    let* () = 
+      let open Lwt.Syntax in
+      let insert_one id name = 
+        let insert = sprintf "INSERT INTO %s (id, name, age, balance, bignum, created) SELECT to_int32(%d), '%s', to_uint32(%d), to_float64(%f), to_int64(%Ld), now()"
+          table_name id name (30 + id) (2000.0 +. float_of_int id) (Int64.of_int (2000000 + id))
+      in
+      Client.execute client insert
+      in
+      let* _ = insert_one 201 "Unbounded1" in
+      let* _ = insert_one 202 "Unbounded2" in
+      let* _ = insert_one 203 "Unbounded3" in
+      Lwt.return_unit
+    in
+    
+    (* Now collect the results *)
     let* result4 = DataTypeTests.test_unbounded_query conn2 table_name 3 in
     printf "%s" (TableFormatter.format_result result4);
     
