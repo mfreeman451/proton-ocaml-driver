@@ -1,6 +1,68 @@
 open Columns_types
 open Binary
 
+(* Cheap formatters to avoid Printf in hot paths *)
+let hex_tab = [| "0";"1";"2";"3";"4";"5";"6";"7";"8";"9";"a";"b";"c";"d";"e";"f" |]
+
+let two_hex (b:int) (buf:bytes) (off:int) =
+  let hi = (b lsr 4) land 0xF and lo = b land 0xF in
+  Bytes.blit_string hex_tab.(hi) 0 buf off 1;
+  Bytes.blit_string hex_tab.(lo) 0 buf (off+1) 1
+
+let format_uuid_16 (b:bytes) : string =
+  let out = Bytes.create 36 in
+  let write_byte i o = two_hex (Char.code (Bytes.get b i)) out o in
+  write_byte 0 0; write_byte 1 2; write_byte 2 4; write_byte 3 6;  Bytes.set out 8 '-';
+  write_byte 4 9; write_byte 5 11;                               Bytes.set out 13 '-';
+  write_byte 6 14; write_byte 7 16;                              Bytes.set out 18 '-';
+  write_byte 8 19; write_byte 9 21;                              Bytes.set out 23 '-';
+  write_byte 10 24; write_byte 11 26; write_byte 12 28; write_byte 13 30; write_byte 14 32; write_byte 15 34;
+  Bytes.unsafe_to_string out
+
+let write_u8_decimal (out:bytes) (off:int) (v:int) : int =
+  if v >= 100 then (
+    let h = v / 100 in Bytes.set out off (Char.chr (48 + h));
+    let rem = v - (h * 100) in
+    let t = rem / 10 in Bytes.set out (off+1) (Char.chr (48 + t));
+    let o = rem - (t * 10) in Bytes.set out (off+2) (Char.chr (48 + o));
+    3
+  ) else if v >= 10 then (
+    let t = v / 10 in Bytes.set out off (Char.chr (48 + t));
+    let o = v - (t * 10) in Bytes.set out (off+1) (Char.chr (48 + o));
+    2
+  ) else (
+    Bytes.set out off (Char.chr (48 + v)); 1
+  )
+
+let format_ipv4 (v:int) : string =
+  let out = Bytes.create 15 in
+  let b0 = v land 0xFF
+  and b1 = (v lsr 8) land 0xFF
+  and b2 = (v lsr 16) land 0xFF
+  and b3 = (v lsr 24) land 0xFF in
+  let len0 = write_u8_decimal out 0 b0 in Bytes.set out len0 '.';
+  let len1 = len0 + 1 + write_u8_decimal out (len0 + 1) b1 in Bytes.set out len1 '.';
+  let len2 = len1 + 1 + write_u8_decimal out (len1 + 1) b2 in Bytes.set out len2 '.';
+  let len3 = len2 + 1 + write_u8_decimal out (len2 + 1) b3 in
+  Bytes.sub_string out 0 len3
+
+let format_ipv6_16 (b:bytes) : string =
+  (* Full form: 8 hextets with leading zeros, lowercase, separated by ':' *)
+  let out = Bytes.create 39 in
+  let write_hextet idx off =
+    two_hex (Char.code (Bytes.get b (2*idx))) out off;
+    two_hex (Char.code (Bytes.get b (2*idx + 1))) out (off + 2)
+  in
+  write_hextet 0 0;  Bytes.set out 4  ':';
+  write_hextet 1 5;  Bytes.set out 9  ':';
+  write_hextet 2 10; Bytes.set out 14 ':';
+  write_hextet 3 15; Bytes.set out 19 ':';
+  write_hextet 4 20; Bytes.set out 24 ':';
+  write_hextet 5 25; Bytes.set out 29 ':';
+  write_hextet 6 30; Bytes.set out 34 ':';
+  write_hextet 7 35;
+  Bytes.unsafe_to_string out
+
 let reader_primitive_of_spec (s:string)
   : ((in_channel -> int -> value array)) option =
   let s = String.lowercase_ascii (String.trim s) in
@@ -32,22 +94,17 @@ let reader_primitive_of_spec (s:string)
         let a = Array.make n VNull in
         for i=0 to n-1 do
           let b = really_input_bytes ic 16 in
-          let hex i = Printf.sprintf "%02x" (Char.code (Bytes.get b i)) in
-          let part a b = String.concat "" (List.init (b-a+1) (fun k -> hex (a+k))) in
-          let s = part 0 3 ^ "-" ^ part 4 5 ^ "-" ^ part 6 7 ^ "-" ^ part 8 9 ^ "-" ^ part 10 15 in
-          a.(i) <- VString s
+          a.(i) <- VString (format_uuid_16 b)
         done; a)
   | _ when s = "ipv4" ->
       Some (fun ic n -> let a = Array.make n VNull in for i=0 to n-1 do
         let v = read_int32_le ic |> Int32.to_int in
-        let b0 = v land 0xFF and b1 = (v lsr 8) land 0xFF and b2 = (v lsr 16) land 0xFF and b3 = (v lsr 24) land 0xFF in
-        a.(i) <- VString (Printf.sprintf "%d.%d.%d.%d" b0 b1 b2 b3)
+        a.(i) <- VString (format_ipv4 v)
       done; a)
   | _ when s = "ipv6" ->
       Some (fun ic n -> let a = Array.make n VNull in for i=0 to n-1 do
         let b = really_input_bytes ic 16 in
-        let hex i = Printf.sprintf "%02x" (Char.code (Bytes.get b i)) in
-        a.(i) <- VString (String.concat ":" (List.init 8 (fun i -> hex (2*i) ^ hex (2*i+1))))
+        a.(i) <- VString (format_ipv6_16 b)
       done; a)
   | _ when s = "json" -> Some (fun ic n -> let a = Array.make n VNull in for i=0 to n-1 do a.(i) <- VString (read_str ic) done; a)
   | _ when has_prefix s "enum8(" -> 
@@ -120,22 +177,17 @@ let reader_primitive_of_spec_br (s:string)
         let a = Array.make n VNull in
         for i=0 to n-1 do
           let b = really_input_bytes_br br 16 in
-          let hex i = Printf.sprintf "%02x" (Char.code (Bytes.get b i)) in
-          let part a b = String.concat "" (List.init (b-a+1) (fun k -> hex (a+k))) in
-          let s = part 0 3 ^ "-" ^ part 4 5 ^ "-" ^ part 6 7 ^ "-" ^ part 8 9 ^ "-" ^ part 10 15 in
-          a.(i) <- VString s
+          a.(i) <- VString (format_uuid_16 b)
         done; a)
   | _ when s = "ipv4" ->
       Some (fun br n -> let a = Array.make n VNull in for i=0 to n-1 do
         let v = read_int32_le_br br |> Int32.to_int in
-        let b0 = v land 0xFF and b1 = (v lsr 8) land 0xFF and b2 = (v lsr 16) land 0xFF and b3 = (v lsr 24) land 0xFF in
-        a.(i) <- VString (Printf.sprintf "%d.%d.%d.%d" b0 b1 b2 b3)
+        a.(i) <- VString (format_ipv4 v)
       done; a)
   | _ when s = "ipv6" ->
       Some (fun br n -> let a = Array.make n VNull in for i=0 to n-1 do
         let b = really_input_bytes_br br 16 in
-        let hex i = Printf.sprintf "%02x" (Char.code (Bytes.get b i)) in
-        a.(i) <- VString (String.concat ":" (List.init 8 (fun i -> hex (2*i) ^ hex (2*i+1))))
+        a.(i) <- VString (format_ipv6_16 b)
       done; a)
   | _ when s = "json" -> Some (fun br n -> let a = Array.make n VNull in for i=0 to n-1 do a.(i) <- VString (read_str_br br) done; a)
   | _ when has_prefix s "enum8(" -> 
