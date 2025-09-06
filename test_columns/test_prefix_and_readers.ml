@@ -2,13 +2,13 @@ open Proton
 
 let test_has_prefix () =
   let check msg exp got = Alcotest.(check bool) msg exp got in
-  (* has_prefix is re-exported via Columns (include Columns_types) *)
-  check "exact match" true (Columns.has_prefix "datetime64" "datetime64");
-  check "simple true" true (Columns.has_prefix "datetime64(3)" "datetime64");
-  check "simple false" false (Columns.has_prefix "date" "datetime");
-  check "longer pattern than string" false (Columns.has_prefix "abc" "abcdef");
-  check "empty pattern" true (Columns.has_prefix "abc" "");
-  check "empty string, non-empty pattern" false (Columns.has_prefix "" "x")
+  (* has_prefix available via Column (include Column_types) *)
+  check "exact match" true (Column.has_prefix "datetime64" "datetime64");
+  check "simple true" true (Column.has_prefix "datetime64(3)" "datetime64");
+  check "simple false" false (Column.has_prefix "date" "datetime");
+  check "longer pattern than string" false (Column.has_prefix "abc" "abcdef");
+  check "empty pattern" true (Column.has_prefix "abc" "");
+  check "empty string, non-empty pattern" false (Column.has_prefix "" "x")
 
 let test_reader_resolution_noalloc_prefix () =
   (* Ensure common prefixes resolve to reader functions and accept n=0 *)
@@ -22,12 +22,12 @@ let test_reader_resolution_noalloc_prefix () =
   List.iter (fun spec ->
     (* buffered reader variant *)
     let br = Buffered_reader.create_from_bytes_no_copy (Bytes.create 0) in
-    let r_br = Columns.reader_of_spec_br spec in
+    let r_br = Column.reader_of_spec_br spec in
     let arr = r_br br 0 in
     Alcotest.(check int) ("zero-length ok: " ^ spec) 0 (Array.length arr);
     (* channel variant *)
     let ic = open_in_gen [Open_binary] 0 "/dev/null" in
-    let r = Columns.reader_of_spec spec in
+    let r = Column.reader_of_spec spec in
     let arr2 = r ic 0 in
     Alcotest.(check int) ("zero-length ok ch: " ^ spec) 0 (Array.length arr2);
     close_in_noerr ic

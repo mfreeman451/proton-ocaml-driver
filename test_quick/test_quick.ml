@@ -17,7 +17,7 @@ let () =
           Printf.printf "✓ Query executed! Got %d rows, %d columns\n" 
             (List.length rows) (List.length cols);
           List.iter (fun row ->
-            let values = List.map Columns.value_to_string row in
+            let values = List.map Column.value_to_string row in
             Printf.printf "  Values: [%s]\n" (String.concat ", " values)
           ) rows;
           Lwt.return_unit

@@ -1,7 +1,7 @@
 open Varint
 open Binary
 (* Block_info is fully qualified in usage *)
-open Columns
+open Column
 
 type column = {
   name : string;
@@ -32,7 +32,7 @@ let read_block ~revision ic : t =
         let data =
           if n_rows = 0 then [||]
           else
-            let reader = Columns.reader_of_spec type_spec in
+            let reader = Column.reader_of_spec type_spec in
             reader ic n_rows
         in
         let c = { name; type_spec; data } in
@@ -59,7 +59,7 @@ let read_block_br ~revision br : t =
         let data =
           if n_rows = 0 then [||]
           else
-            let reader = Columns.reader_of_spec_br type_spec in
+            let reader = Column.reader_of_spec_br type_spec in
             reader br n_rows
         in
         let c = { name; type_spec; data } in

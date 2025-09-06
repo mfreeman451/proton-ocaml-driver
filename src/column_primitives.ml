@@ -1,4 +1,4 @@
-open Columns_types
+open Column_types
 open Binary
 
 (* Cheap formatters to avoid Printf in hot paths *)
@@ -67,46 +67,46 @@ let reader_primitive_of_spec (s:string)
   : ((in_channel -> int -> value array)) option =
   let s = String.lowercase_ascii (String.trim s) in
   match true with
-  | _ when s = "string" -> Some (fun ic n -> let a = Array.make n VNull in for i=0 to n-1 do a.(i) <- VString (read_str ic) done; a)
-  | _ when s = "int8" -> Some (fun ic n -> let a = Array.make n VNull in for i=0 to n-1 do let b = read_uint8 ic in let v = if b > 127 then b - 256 else b in a.(i) <- VInt32 (Int32.of_int v) done; a)
-  | _ when s = "uint8" -> Some (fun ic n -> let a = Array.make n VNull in for i=0 to n-1 do a.(i) <- VUInt32 (Int32.of_int (read_uint8 ic)) done; a)
-  | _ when s = "int16" -> Some (fun ic n -> let a = Array.make n VNull in for i=0 to n-1 do let a1 = read_uint8 ic and b1 = read_uint8 ic in let v = a1 lor (b1 lsl 8) in let v = if v land 0x8000 <> 0 then v - 0x10000 else v in a.(i) <- VInt32 (Int32.of_int v) done; a)
-  | _ when s = "uint16" -> Some (fun ic n -> let a = Array.make n VNull in for i=0 to n-1 do let a1 = read_uint8 ic and b1 = read_uint8 ic in a.(i) <- VUInt32 (Int32.of_int (a1 lor (b1 lsl 8))) done; a)
-  | _ when s = "int32" -> Some (fun ic n -> let a = Array.make n VNull in for i=0 to n-1 do a.(i) <- VInt32 (read_int32_le ic) done; a)
-  | _ when s = "uint32" -> Some (fun ic n -> let a = Array.make n VNull in for i=0 to n-1 do a.(i) <- VUInt32 (read_int32_le ic) done; a)
-  | _ when s = "int64" -> Some (fun ic n -> let a = Array.make n VNull in for i=0 to n-1 do a.(i) <- VInt64 (read_uint64_le ic) done; a)
-  | _ when s = "uint64" -> Some (fun ic n -> let a = Array.make n VNull in for i=0 to n-1 do a.(i) <- VUInt64 (read_uint64_le ic) done; a)
-  | _ when s = "float64" -> Some (fun ic n -> let a = Array.make n VNull in for i=0 to n-1 do a.(i) <- VFloat64 (read_float64_le ic) done; a)
-  | _ when s = "bool" -> Some (fun ic n -> let a = Array.make n VNull in for i=0 to n-1 do a.(i) <- VUInt32 (read_int32_le ic) done; a)
+  | _ when s = "string" -> Some (fun ic n -> let a = Array.make n Null in for i=0 to n-1 do a.(i) <- String (read_str ic) done; a)
+  | _ when s = "int8" -> Some (fun ic n -> let a = Array.make n Null in for i=0 to n-1 do let b = read_uint8 ic in let v = if b > 127 then b - 256 else b in a.(i) <- Int32 (Int32.of_int v) done; a)
+  | _ when s = "uint8" -> Some (fun ic n -> let a = Array.make n Null in for i=0 to n-1 do a.(i) <- UInt32 (Int32.of_int (read_uint8 ic)) done; a)
+  | _ when s = "int16" -> Some (fun ic n -> let a = Array.make n Null in for i=0 to n-1 do let a1 = read_uint8 ic and b1 = read_uint8 ic in let v = a1 lor (b1 lsl 8) in let v = if v land 0x8000 <> 0 then v - 0x10000 else v in a.(i) <- Int32 (Int32.of_int v) done; a)
+  | _ when s = "uint16" -> Some (fun ic n -> let a = Array.make n Null in for i=0 to n-1 do let a1 = read_uint8 ic and b1 = read_uint8 ic in a.(i) <- UInt32 (Int32.of_int (a1 lor (b1 lsl 8))) done; a)
+  | _ when s = "int32" -> Some (fun ic n -> let a = Array.make n Null in for i=0 to n-1 do a.(i) <- Int32 (read_int32_le ic) done; a)
+  | _ when s = "uint32" -> Some (fun ic n -> let a = Array.make n Null in for i=0 to n-1 do a.(i) <- UInt32 (read_int32_le ic) done; a)
+  | _ when s = "int64" -> Some (fun ic n -> let a = Array.make n Null in for i=0 to n-1 do a.(i) <- Int64 (read_uint64_le ic) done; a)
+  | _ when s = "uint64" -> Some (fun ic n -> let a = Array.make n Null in for i=0 to n-1 do a.(i) <- UInt64 (read_uint64_le ic) done; a)
+  | _ when s = "float64" -> Some (fun ic n -> let a = Array.make n Null in for i=0 to n-1 do a.(i) <- Float64 (read_float64_le ic) done; a)
+  | _ when s = "bool" -> Some (fun ic n -> let a = Array.make n Null in for i=0 to n-1 do a.(i) <- UInt32 (read_int32_le ic) done; a)
   | _ when has_prefix s "fixedstring(" ->
       let inside = String.sub s 12 (String.length s - 13) |> String.trim in
       let len = int_of_string inside in
       Some (fun ic n ->
-        let a = Array.make n VNull in
+        let a = Array.make n Null in
         for i=0 to n-1 do
           let buf = really_input_bytes ic len in
           let rec rstrip i = if i > 0 && Bytes.get buf (i-1) = Char.chr 0 then rstrip (i-1) else i in
           let l = rstrip len in
-          a.(i) <- VString (Bytes.sub_string buf 0 l)
+          a.(i) <- String (Bytes.sub_string buf 0 l)
         done; a)
   | _ when s = "uuid" ->
       Some (fun ic n ->
-        let a = Array.make n VNull in
+        let a = Array.make n Null in
         for i=0 to n-1 do
           let b = really_input_bytes ic 16 in
-          a.(i) <- VString (format_uuid_16 b)
+          a.(i) <- String (format_uuid_16 b)
         done; a)
   | _ when s = "ipv4" ->
-      Some (fun ic n -> let a = Array.make n VNull in for i=0 to n-1 do
+      Some (fun ic n -> let a = Array.make n Null in for i=0 to n-1 do
         let v = read_int32_le ic |> Int32.to_int in
-        a.(i) <- VString (format_ipv4 v)
+        a.(i) <- String (format_ipv4 v)
       done; a)
   | _ when s = "ipv6" ->
-      Some (fun ic n -> let a = Array.make n VNull in for i=0 to n-1 do
+      Some (fun ic n -> let a = Array.make n Null in for i=0 to n-1 do
         let b = really_input_bytes ic 16 in
-        a.(i) <- VString (format_ipv6_16 b)
+        a.(i) <- String (format_ipv6_16 b)
       done; a)
-  | _ when s = "json" -> Some (fun ic n -> let a = Array.make n VNull in for i=0 to n-1 do a.(i) <- VString (read_str ic) done; a)
+  | _ when s = "json" -> Some (fun ic n -> let a = Array.make n Null in for i=0 to n-1 do a.(i) <- String (read_str ic) done; a)
   | _ when has_prefix s "enum8(" -> 
       (* Parse enum8 mapping *)
       let inside = String.sub s 6 (String.length s - 7) in
@@ -118,11 +118,11 @@ let reader_primitive_of_spec (s:string)
             let name = if String.length name >= 2 && name.[0] = '\'' then String.sub name 1 (String.length name - 2) else name in
             let v = int_of_string (String.trim v) in Hashtbl.add tbl v name
         | _ -> ()) pairs;
-      Some (fun ic n -> let a = Array.make n VNull in for i=0 to n-1 do
+      Some (fun ic n -> let a = Array.make n Null in for i=0 to n-1 do
         let b = read_uint8 ic in
         let v = if b > 127 then b - 256 else b in
         let s = try Hashtbl.find tbl v with Not_found -> string_of_int v in
-        a.(i) <- VEnum8 (s, v)
+        a.(i) <- Enum8 (s, v)
       done; a)
   | _ when has_prefix s "enum16(" ->
       (* Parse enum16 mapping *)
@@ -135,61 +135,61 @@ let reader_primitive_of_spec (s:string)
             let name = if String.length name >= 2 && name.[0] = '\'' then String.sub name 1 (String.length name - 2) else name in
             let v = int_of_string (String.trim v) in Hashtbl.add tbl v name
         | _ -> ()) pairs;
-      Some (fun ic n -> let a = Array.make n VNull in for i=0 to n-1 do
+      Some (fun ic n -> let a = Array.make n Null in for i=0 to n-1 do
         let v32 = read_int32_le ic in
         let v = Int32.to_int v32 in
         let s = try Hashtbl.find tbl v with Not_found -> string_of_int v in
-        a.(i) <- VEnum16 (s, v)
+        a.(i) <- Enum16 (s, v)
       done; a)
   | _ when has_prefix s "decimal" ->
   (* Decimal values are stored as integers. For Decimal(10,2) it's int64 *)
-  Some (fun ic n -> let a = Array.make n VNull in for i=0 to n-1 do a.(i) <- VInt64 (read_uint64_le ic) done; a)
+  Some (fun ic n -> let a = Array.make n Null in for i=0 to n-1 do a.(i) <- Int64 (read_uint64_le ic) done; a)
   | _ -> None
 
 let reader_primitive_of_spec_br (s:string)
   : ((Buffered_reader.t -> int -> value array)) option =
   let s = String.lowercase_ascii (String.trim s) in
   match true with
-  | _ when s = "string" -> Some (fun br n -> let a = Array.make n VNull in for i=0 to n-1 do a.(i) <- VString (read_str_br br) done; a)
-  | _ when s = "int8" -> Some (fun br n -> let a = Array.make n VNull in for i=0 to n-1 do let b = read_uint8_br br in let v = if b > 127 then b - 256 else b in a.(i) <- VInt32 (Int32.of_int v) done; a)
-  | _ when s = "uint8" -> Some (fun br n -> let a = Array.make n VNull in for i=0 to n-1 do a.(i) <- VUInt32 (Int32.of_int (read_uint8_br br)) done; a)
-  | _ when s = "int16" -> Some (fun br n -> let a = Array.make n VNull in for i=0 to n-1 do let a1 = read_uint8_br br and b1 = read_uint8_br br in let v = a1 lor (b1 lsl 8) in let v = if v land 0x8000 <> 0 then v - 0x10000 else v in a.(i) <- VInt32 (Int32.of_int v) done; a)
-  | _ when s = "uint16" -> Some (fun br n -> let a = Array.make n VNull in for i=0 to n-1 do let a1 = read_uint8_br br and b1 = read_uint8_br br in a.(i) <- VUInt32 (Int32.of_int (a1 lor (b1 lsl 8))) done; a)
-  | _ when s = "int32" -> Some (fun br n -> let a = Array.make n VNull in for i=0 to n-1 do a.(i) <- VInt32 (read_int32_le_br br) done; a)
-  | _ when s = "uint32" -> Some (fun br n -> let a = Array.make n VNull in for i=0 to n-1 do a.(i) <- VUInt32 (read_int32_le_br br) done; a)
-  | _ when s = "int64" -> Some (fun br n -> let a = Array.make n VNull in for i=0 to n-1 do a.(i) <- VInt64 (read_uint64_le_br br) done; a)
-  | _ when s = "uint64" -> Some (fun br n -> let a = Array.make n VNull in for i=0 to n-1 do a.(i) <- VUInt64 (read_uint64_le_br br) done; a)
-  | _ when s = "float64" -> Some (fun br n -> let a = Array.make n VNull in for i=0 to n-1 do a.(i) <- VFloat64 (read_float64_le_br br) done; a)
-  | _ when s = "bool" -> Some (fun br n -> let a = Array.make n VNull in for i=0 to n-1 do a.(i) <- VUInt32 (read_int32_le_br br) done; a)
+  | _ when s = "string" -> Some (fun br n -> let a = Array.make n Null in for i=0 to n-1 do a.(i) <- String (read_str_br br) done; a)
+  | _ when s = "int8" -> Some (fun br n -> let a = Array.make n Null in for i=0 to n-1 do let b = read_uint8_br br in let v = if b > 127 then b - 256 else b in a.(i) <- Int32 (Int32.of_int v) done; a)
+  | _ when s = "uint8" -> Some (fun br n -> let a = Array.make n Null in for i=0 to n-1 do a.(i) <- UInt32 (Int32.of_int (read_uint8_br br)) done; a)
+  | _ when s = "int16" -> Some (fun br n -> let a = Array.make n Null in for i=0 to n-1 do let a1 = read_uint8_br br and b1 = read_uint8_br br in let v = a1 lor (b1 lsl 8) in let v = if v land 0x8000 <> 0 then v - 0x10000 else v in a.(i) <- Int32 (Int32.of_int v) done; a)
+  | _ when s = "uint16" -> Some (fun br n -> let a = Array.make n Null in for i=0 to n-1 do let a1 = read_uint8_br br and b1 = read_uint8_br br in a.(i) <- UInt32 (Int32.of_int (a1 lor (b1 lsl 8))) done; a)
+  | _ when s = "int32" -> Some (fun br n -> let a = Array.make n Null in for i=0 to n-1 do a.(i) <- Int32 (read_int32_le_br br) done; a)
+  | _ when s = "uint32" -> Some (fun br n -> let a = Array.make n Null in for i=0 to n-1 do a.(i) <- UInt32 (read_int32_le_br br) done; a)
+  | _ when s = "int64" -> Some (fun br n -> let a = Array.make n Null in for i=0 to n-1 do a.(i) <- Int64 (read_uint64_le_br br) done; a)
+  | _ when s = "uint64" -> Some (fun br n -> let a = Array.make n Null in for i=0 to n-1 do a.(i) <- UInt64 (read_uint64_le_br br) done; a)
+  | _ when s = "float64" -> Some (fun br n -> let a = Array.make n Null in for i=0 to n-1 do a.(i) <- Float64 (read_float64_le_br br) done; a)
+  | _ when s = "bool" -> Some (fun br n -> let a = Array.make n Null in for i=0 to n-1 do a.(i) <- UInt32 (read_int32_le_br br) done; a)
   | _ when has_prefix s "fixedstring(" ->
       let inside = String.sub s 12 (String.length s - 13) |> String.trim in
       let len = int_of_string inside in
       Some (fun br n ->
-        let a = Array.make n VNull in
+        let a = Array.make n Null in
         for i=0 to n-1 do
           let buf = really_input_bytes_br br len in
           let rec rstrip i = if i > 0 && Bytes.get buf (i-1) = Char.chr 0 then rstrip (i-1) else i in
           let l = rstrip len in
-          a.(i) <- VString (Bytes.sub_string buf 0 l)
+          a.(i) <- String (Bytes.sub_string buf 0 l)
         done; a)
   | _ when s = "uuid" ->
       Some (fun br n ->
-        let a = Array.make n VNull in
+        let a = Array.make n Null in
         for i=0 to n-1 do
           let b = really_input_bytes_br br 16 in
-          a.(i) <- VString (format_uuid_16 b)
+          a.(i) <- String (format_uuid_16 b)
         done; a)
   | _ when s = "ipv4" ->
-      Some (fun br n -> let a = Array.make n VNull in for i=0 to n-1 do
+      Some (fun br n -> let a = Array.make n Null in for i=0 to n-1 do
         let v = read_int32_le_br br |> Int32.to_int in
-        a.(i) <- VString (format_ipv4 v)
+        a.(i) <- String (format_ipv4 v)
       done; a)
   | _ when s = "ipv6" ->
-      Some (fun br n -> let a = Array.make n VNull in for i=0 to n-1 do
+      Some (fun br n -> let a = Array.make n Null in for i=0 to n-1 do
         let b = really_input_bytes_br br 16 in
-        a.(i) <- VString (format_ipv6_16 b)
+        a.(i) <- String (format_ipv6_16 b)
       done; a)
-  | _ when s = "json" -> Some (fun br n -> let a = Array.make n VNull in for i=0 to n-1 do a.(i) <- VString (read_str_br br) done; a)
+  | _ when s = "json" -> Some (fun br n -> let a = Array.make n Null in for i=0 to n-1 do a.(i) <- String (read_str_br br) done; a)
   | _ when has_prefix s "enum8(" -> 
       (* Parse enum8 mapping *)
       let inside = String.sub s 6 (String.length s - 7) in
@@ -201,11 +201,11 @@ let reader_primitive_of_spec_br (s:string)
             let name = if String.length name >= 2 && name.[0] = '\'' then String.sub name 1 (String.length name - 2) else name in
             let v = int_of_string (String.trim v) in Hashtbl.add tbl v name
         | _ -> ()) pairs;
-      Some (fun br n -> let a = Array.make n VNull in for i=0 to n-1 do
+      Some (fun br n -> let a = Array.make n Null in for i=0 to n-1 do
         let b = read_uint8_br br in
         let v = if b > 127 then b - 256 else b in
         let s = try Hashtbl.find tbl v with Not_found -> string_of_int v in
-        a.(i) <- VEnum8 (s, v)
+        a.(i) <- Enum8 (s, v)
       done; a)
   | _ when has_prefix s "enum16(" ->
       (* Parse enum16 mapping *)
@@ -218,13 +218,14 @@ let reader_primitive_of_spec_br (s:string)
             let name = if String.length name >= 2 && name.[0] = '\'' then String.sub name 1 (String.length name - 2) else name in
             let v = int_of_string (String.trim v) in Hashtbl.add tbl v name
         | _ -> ()) pairs;
-      Some (fun br n -> let a = Array.make n VNull in for i=0 to n-1 do
+      Some (fun br n -> let a = Array.make n Null in for i=0 to n-1 do
         let v32 = read_int32_le_br br in
         let v = Int32.to_int v32 in
         let s = try Hashtbl.find tbl v with Not_found -> string_of_int v in
-        a.(i) <- VEnum16 (s, v)
+        a.(i) <- Enum16 (s, v)
       done; a)
   | _ when has_prefix s "decimal" ->
       (* Decimal values are stored as integers. For Decimal(10,2) it's int64 *)
-      Some (fun br n -> let a = Array.make n VNull in for i=0 to n-1 do a.(i) <- VInt64 (read_uint64_le_br br) done; a)
+      Some (fun br n -> let a = Array.make n Null in for i=0 to n-1 do a.(i) <- Int64 (read_uint64_le_br br) done; a)
   | _ -> None
+

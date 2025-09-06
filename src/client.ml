@@ -1,11 +1,11 @@
 open Connection
 open Block
-(* Columns used via qualified access *)
+(* Column used via qualified access *)
 open Lwt.Syntax
 
 type query_result =
   | NoRows
-  | Rows of (Columns.value list list * (string * string) list)
+  | Rows of (Column.value list list * (string * string) list)
 
 type t = { conn : Connection.t }
 
@@ -18,7 +18,7 @@ let disconnect c = Connection.disconnect c.conn
 let execute c (query:string) : query_result Lwt.t =
   let* () = Connection.send_query c.conn query in
   let cols_header = ref None in
-  let rows_acc : Columns.value list list ref = ref [] in
+  let rows_acc : Column.value list list ref = ref [] in
   let rec loop () =
     let* pkt = Connection.receive_packet c.conn in
     match pkt with

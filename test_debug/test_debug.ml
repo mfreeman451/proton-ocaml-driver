@@ -40,7 +40,7 @@ let test_connection_debug () =
               (List.length rows) (List.length cols);
             List.iteri (fun i (name, ty) -> printf "  col[%d]: name='%s' type='%s'\n%!" i name ty) cols;
             List.iteri (fun ri row ->
-              let vs = List.map Columns.value_to_string row in
+              let vs = List.map Column.value_to_string row in
               printf "  row[%d]: %s\n%!" ri (String.concat ", " vs)
             ) rows);
         Lwt.return ()

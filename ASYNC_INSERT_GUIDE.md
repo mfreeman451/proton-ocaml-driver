@@ -22,9 +22,9 @@ let client = Client.create ~host:"localhost" ~database:"mydb" () in
 
 (* Insert a single row *)
 let row = [
-  Columns.VString "user123";
-  Columns.VInt32 42l;
-  Columns.VDateTime (Int64.of_float (Unix.gettimeofday ()), None)
+  Column.String "user123";
+  Column.Int32 42l;
+  Column.DateTime (Int64.of_float (Unix.gettimeofday ()), None)
 ] in
 
 Client.insert_row client "events" 
@@ -36,9 +36,9 @@ Client.insert_row client "events"
 
 ```ocaml
 let rows = [
-  [Columns.VString "user1"; Columns.VInt32 10l];
-  [Columns.VString "user2"; Columns.VInt32 20l];
-  [Columns.VString "user3"; Columns.VInt32 30l];
+  [Column.String "user1"; Column.Int32 10l];
+  [Column.String "user2"; Column.Int32 20l];
+  [Column.String "user3"; Column.Int32 30l];
 ] in
 
 Client.insert_rows client "users"
@@ -114,15 +114,15 @@ All standard Proton value types are supported:
 
 ```ocaml
 [
-  Columns.VString "text_value";
-  Columns.VInt32 42l;
-  Columns.VInt64 1234567890L;
-  Columns.VFloat64 3.14159;
-  Columns.VDateTime (timestamp, Some "UTC");
-  Columns.VDateTime64 (timestamp, 3, Some "UTC");
-  Columns.VEnum8 ("status", 1);
-  Columns.VArray [| VInt32 1l; VInt32 2l; VInt32 3l |];
-  Columns.VMap [(VString "key", VString "value")];
+  Column.String "text_value";
+  Column.Int32 42l;
+  Column.Int64 1234567890L;
+  Column.Float64 3.14159;
+  Column.DateTime (timestamp, Some "UTC");
+  Column.DateTime64 (timestamp, 3, Some "UTC");
+  Column.Enum8 ("status", 1);
+  Column.Array [| Int32 1l; Int32 2l; Int32 3l |];
+  Column.Map [(String "key", String "value")];
 ]
 ```
 
@@ -167,10 +167,10 @@ let setup_event_pipeline () =
   (* Process incoming events *)
   let process_event event_json =
     let event_row = [
-      Columns.VString event_json.user_id;
-      Columns.VString event_json.event_type;
-      Columns.VDateTime (Int64.of_float event_json.timestamp, Some "UTC");
-      Columns.VString (Yojson.to_string event_json.properties);
+      Column.String event_json.user_id;
+      Column.String event_json.event_type;
+      Column.DateTime (Int64.of_float event_json.timestamp, Some "UTC");
+      Column.String (Yojson.to_string event_json.properties);
     ] in
     Async_insert.add_row inserter event_row
   in

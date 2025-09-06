@@ -36,7 +36,7 @@ let run () =
           let rows = Block.get_rows b in
           List.iter (fun row ->
             if !printed < target then (
-              let s = String.concat ", " (List.map Columns.value_to_string row) in
+              let s = String.concat ", " (List.map Column.value_to_string row) in
               printf "[streaming] row: %s\n%!" s;
               incr printed
             )

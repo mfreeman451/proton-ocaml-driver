@@ -32,10 +32,10 @@ val stop : t -> unit Lwt.t
     @param columns Optional column definitions (name, type) - only needed for first row
     @param inserter The async inserter instance
     @param row Row data as list of values *)
-val add_row : ?columns:(string * string) list -> t -> Columns.value list -> unit Lwt.t
+val add_row : ?columns:(string * string) list -> t -> Column.value list -> unit Lwt.t
 
 (** Add multiple rows to the buffer *)
-val add_rows : ?columns:(string * string) list -> t -> Columns.value list list -> unit Lwt.t
+val add_rows : ?columns:(string * string) list -> t -> Column.value list list -> unit Lwt.t
 
 (** Force a flush of the current buffer *)
 val flush : t -> unit Lwt.t

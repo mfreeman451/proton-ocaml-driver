@@ -10,7 +10,7 @@ let print_rows = function
   | Client.NoRows -> Printf.printf "  No rows returned\n"
   | Client.Rows (rows, cols) ->
       List.iter (fun row ->
-        let values = List.map Columns.value_to_string row in
+        let values = List.map Column.value_to_string row in
         Printf.printf "  Row: [%s]\n" (String.concat ", " values)
       ) rows
 
@@ -265,7 +265,7 @@ let test_streaming () =
         ~init:0 
         ~f:(fun acc row ->
           match row with
-          | Columns.VInt32 n :: _ -> Lwt.return (acc + Int32.to_int n)
+          | Column.Int32 n :: _ -> Lwt.return (acc + Int32.to_int n)
           | _ -> Lwt.return acc
         ) in
       Printf.printf "✓ Sum of IDs via fold: %d\n" sum;
@@ -275,7 +275,7 @@ let test_streaming () =
       let* () = Client.query_iter client "SELECT value FROM test_stream"
         ~f:(fun row ->
           match row with
-          | Columns.VString s :: _ -> 
+          | Column.String s :: _ -> 
             Printf.printf "  Value: %s\n" s;
             Lwt.return_unit
           | _ -> Lwt.return_unit

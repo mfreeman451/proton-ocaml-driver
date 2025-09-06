@@ -16,7 +16,7 @@ module TestResult = struct
     query: string;
     _query_type: string;
     elapsed_ms: float;
-    rows: Columns.value list list;
+    rows: Column.value list list;
     column_names: string list;
     _column_types: string list;
   }
@@ -28,7 +28,7 @@ module TableFormatter = struct
     let data_widths = 
       List.fold_left (fun acc row ->
         List.map2 (fun w v -> 
-          max w (String.length (Columns.value_to_string v))
+          max w (String.length (Column.value_to_string v))
         ) acc row
       ) header_widths result.rows
     in
@@ -40,7 +40,7 @@ module TableFormatter = struct
     let cells = List.map2 (fun v w ->
       let s = match v with
         | `String s -> s
-        | `Value v -> Columns.value_to_string v
+        | `Value v -> Column.value_to_string v
       in
       let pad = w - String.length s in
       " " ^ s ^ repeat_char ' ' pad ^ " "
@@ -530,7 +530,7 @@ let run_live_tests () =
                  let rows = Block.get_rows block in
                  List.iter (fun row ->
                    incr rows_received;
-                   let formatted = String.concat " | " (List.map Columns.value_to_string row) in
+                   let formatted = String.concat " | " (List.map Column.value_to_string row) in
                    printf "  [STREAM %04d] %s\n%!" !rows_received formatted
                  ) rows;
                  loop ()
