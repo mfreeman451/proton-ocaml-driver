@@ -27,12 +27,12 @@ let build_uncompressed_block ~cols =
     for _i = 1 to rows do
       match String.lowercase_ascii (String.trim type_spec) with
       | "string" | "json" -> write_str buf "abc"
-      | s when String.length s >= 12 && String.sub s 0 12 = "fixedstring(" ->
+      | s when Columns.has_prefix s "fixedstring(" ->
           Buffer.add_string buf "abc"; Buffer.add_char buf '\x00'
-      | s when String.length s >= 6 && String.sub s 0 6 = "enum8(" ->
+      | s when Columns.has_prefix s "enum8(" ->
           (* Write sequential enum values 1, 2, 3... for each row *)
           Buffer.add_char buf (Char.chr _i)
-      | s when String.length s >= 7 && String.sub s 0 7 = "enum16(" ->
+      | s when Columns.has_prefix s "enum16(" ->
           (* Write sequential enum16 values 100, 200... for each row as int32 LE *)
           let v = _i * 100 in
           Buffer.add_string buf (Bytes.to_string (Bytes.init 4 (fun j -> Char.chr ((v lsr (8*j)) land 0xFF))))
@@ -40,12 +40,12 @@ let build_uncompressed_block ~cols =
       | "int64" | "uint64" -> writeln_int64 42L
       | "float64" -> Buffer.add_string buf (Bytes.to_string (Bytes.make 8 '\x00'))
       | "ipv4" -> writeln_int32 ((127 lsl 24) lor 1)
-      | s when String.length s >= 8 && String.sub s 0 8 = "decimal(" ->
+      | s when Columns.has_prefix s "decimal(" ->
           (* write signed int64 raw: e.g., 12345 for Decimal(10,2) -> 123.45 *)
           writeln_int64 12345L
       | "ipv6" -> Buffer.add_string buf (Bytes.to_string (Bytes.make 16 '\x01'))
       | "uuid" -> Buffer.add_string buf (Bytes.to_string (Bytes.make 16 '\x01'))
-      | s when String.length s >= 9 && String.sub s 0 9 = "nullable(" ->
+      | s when Columns.has_prefix s "nullable(" ->
           Buffer.add_char buf '\x00'; write_str buf "abc"
       | other -> failwith ("unsupported in test: " ^ other)
     done

@@ -4,6 +4,13 @@ open Context
 open Block
 open Lwt.Infix
 
+(* Small inlineable helper to avoid substring allocation in hot paths *)
+let[@inline] has_prefix (s:string) (p:string) : bool =
+  let ls = String.length s and lp = String.length p in
+  if ls < lp then false else (
+    let rec loop i = if i = lp then true else if s.[i] <> p.[i] then false else loop (i+1) in
+    loop 0)
+
 type tls_config = {
   enable_tls: bool;
   ca_cert_file: string option;
@@ -495,10 +502,10 @@ let read_uncompressed_block_lwt read_fn : bytes Lwt.t =
     read_and_copy_str () >>= fun col_type ->
     let t = String.lowercase_ascii (String.trim col_type) in
     let fixed_bytes_per_row =
-      if t = "uint8" || t = "int8" || String.length t >= 6 && String.sub t 0 6 = "enum8(" then Some 1 else
-      if t = "uint16" || t = "int16" || String.length t >= 7 && String.sub t 0 7 = "enum16(" then Some 2 else
+      if t = "uint8" || t = "int8" || has_prefix t "enum8(" then Some 1 else
+      if t = "uint16" || t = "int16" || has_prefix t "enum16(" then Some 2 else
       if t = "uint32" || t = "int32" || t = "float32" || t = "datetime" then Some 4 else
-      if t = "uint64" || t = "int64" || t = "float64" || (String.length t >= 10 && String.sub t 0 10 = "datetime64") then Some 8 else
+      if t = "uint64" || t = "int64" || t = "float64" || has_prefix t "datetime64" then Some 8 else
       None
     in
     (match fixed_bytes_per_row with
