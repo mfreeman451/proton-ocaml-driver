@@ -427,7 +427,7 @@ let read_uncompressed_block_lwt read_fn : bytes Lwt.t =
       if t = "uint8" || t = "int8" || String.length t >= 6 && String.sub t 0 6 = "enum8(" then Some 1 else
       if t = "uint16" || t = "int16" || String.length t >= 7 && String.sub t 0 7 = "enum16(" then Some 2 else
       if t = "uint32" || t = "int32" || t = "float32" || t = "datetime" then Some 4 else
-      if t = "uint64" || t = "int64" || t = "float64" || String.length t >= 9 && String.sub t 0 9 = "datetime64" then Some 8 else
+      if t = "uint64" || t = "int64" || t = "float64" || (String.length t >= 10 && String.sub t 0 10 = "datetime64") then Some 8 else
       None
     in
     (match fixed_bytes_per_row with

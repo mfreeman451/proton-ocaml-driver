@@ -1,0 +1,3 @@
+(executable
+ (name test_quick)
+ (libraries proton lwt unix))

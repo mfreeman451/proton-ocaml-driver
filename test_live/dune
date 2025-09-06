@@ -1,0 +1,14 @@
+(executable
+ (public_name proton_live_test)
+ (name test_live)
+ (libraries proton lwt lwt.unix))
+
+(rule
+ (alias livetest)
+ (deps test_live.exe)
+ (action (run %{deps})))
+
+(rule
+ (alias e2e)
+ (deps test_live.exe)
+ (action (run %{deps})))
