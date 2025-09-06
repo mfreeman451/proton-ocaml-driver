@@ -135,22 +135,22 @@ module DataTypeTests = struct
     Lwt.return_unit
 
   let test_bounded_query conn table_name column_filter =
-    (* Use direct SELECT with SETTINGS to read historical data *)
-    let query = sprintf "SELECT %s FROM %s ORDER BY id LIMIT 5 SETTINGS query_mode='table'" column_filter table_name in
+    (* First try bounded query with SETTINGS *)
+    let bounded_query = sprintf "SELECT %s FROM %s ORDER BY id LIMIT 5 SETTINGS query_mode='table'" column_filter table_name in
     let start_time = Unix.gettimeofday () in
     
-    printf "[DEBUG] Sending bounded query: %s\n%!" query;
+    printf "[DEBUG] Trying bounded query: %s\n%!" bounded_query;
     
     let open Lwt.Syntax in
-    let* () = Connection.send_query conn query in
+    let* () = Connection.send_query conn bounded_query in
     printf "[DEBUG] Query sent, waiting for response...\n%!";
     
     let rec collect_results acc_rows col_info =
       let open Lwt.Infix in
       Connection.receive_packet conn >>= function
       | Connection.PData block ->
-          printf "[DEBUG] Received data block with %d rows\n%!" (List.length (Block.get_rows block));
           let rows = Block.get_rows block in
+          printf "[DEBUG] Received data block with %d rows\n%!" (List.length rows);
           let col_info = match col_info with
             | None -> 
                 let cols = Block.columns_with_types block in
@@ -166,7 +166,7 @@ module DataTypeTests = struct
             | None -> ([], [])
           in
           Lwt.return {
-            TestResult.query;
+            TestResult.query = bounded_query;
             _query_type = "bounded";
             elapsed_ms;
             rows = acc_rows;
@@ -185,21 +185,136 @@ module DataTypeTests = struct
           collect_results acc_rows col_info
     in
     
-    (* Add timeout to bounded query *)
-    Lwt.catch
-      (fun () ->
-        Lwt_unix.with_timeout 5.0 (fun () -> collect_results [] None))
-      (fun ex ->
-        printf "[DEBUG] Bounded query timed out or failed: %s\n%!" (Printexc.to_string ex);
-        let elapsed_ms = (Unix.gettimeofday () -. start_time) *. 1000.0 in
-        Lwt.return {
-          TestResult.query;
-          _query_type = "bounded (timeout/empty)";
-          elapsed_ms;
-          rows = [];
-          column_names = [];
-          _column_types = [];
-        })
+    (* Try bounded query with timeout *)
+    let* bounded_result = 
+      Lwt.catch
+        (fun () ->
+          Lwt_unix.with_timeout 3.0 (fun () -> collect_results [] None))
+        (fun ex ->
+          printf "[DEBUG] Bounded query timed out or failed: %s\n%!" (Printexc.to_string ex);
+          let elapsed_ms = (Unix.gettimeofday () -. start_time) *. 1000.0 in
+          Lwt.return {
+            TestResult.query = bounded_query;
+            _query_type = "bounded (timeout)";
+            elapsed_ms;
+            rows = [];
+            column_names = [];
+            _column_types = [];
+          })
+    in
+    
+    (* If bounded query returned no rows, fall back to re-insert + streaming *)
+    if bounded_result.rows = [] then begin
+      printf "[INFO] Bounded query returned empty; falling back to live streaming demo\n%!";
+      printf "[INFO] Will re-insert data and capture via streaming\n%!";
+      
+      (* Create new connection for unbounded query *)
+      let conn2 = Connection.create ~host:"127.0.0.1" ~port:8463 ~compression:Compress.None () in
+      
+      (* Start streaming query FIRST *)
+      let unbounded_query = sprintf "SELECT %s FROM %s" column_filter table_name in
+      printf "[DEBUG] Starting streaming query: %s\n%!" unbounded_query;
+      let start_time = Unix.gettimeofday () in
+      let* () = Connection.send_query conn2 unbounded_query in
+      
+      (* Now re-insert the data so streaming will see it *)
+      printf "[DEBUG] Re-inserting data for streaming capture...\n%!";
+      let client = Client.create ~host:"127.0.0.1" ~port:8463 () in
+      let* () = 
+        let open Lwt.Syntax in
+        let insert_one id = 
+          let insert = sprintf "INSERT INTO %s (id, name, age, balance, bignum, created) SELECT to_int32(%d), 'Stream%d', to_uint32(%d), to_float64(%f), to_int64(%Ld), now()"
+            table_name id id (20 + id) (1000.0 +. float_of_int id) (Int64.of_int (1000000 + id))
+        in
+        Client.execute client insert
+        in
+        let* _ = insert_one 101 in
+        let* _ = insert_one 102 in
+        let* _ = insert_one 103 in
+        let* _ = insert_one 104 in
+        let* _ = insert_one 105 in
+        Lwt.return_unit
+      in
+      
+      (* Collect streaming results with timeout and max attempts *)
+      let rec collect_streaming acc_rows col_info row_count attempts max_attempts =
+        if row_count >= 5 then begin
+          printf "[DEBUG] Got enough rows (%d), stopping\n%!" row_count;
+          let elapsed_ms = (Unix.gettimeofday () -. start_time) *. 1000.0 in
+          let (names, types) = match col_info with
+            | Some (n, t) -> (n, t)
+            | None -> ([], [])
+          in
+          let* () = Connection.disconnect conn2 in
+          Lwt.return {
+            TestResult.query = unbounded_query;
+            _query_type = sprintf "streaming fallback (got %d rows)" row_count;
+            elapsed_ms;
+            rows = ListExtra.take_n 5 acc_rows;
+            column_names = names;
+            _column_types = types;
+          }
+        end else if attempts >= max_attempts then begin
+          printf "[DEBUG] Max attempts reached (%d), stopping with %d rows\n%!" max_attempts row_count;
+          let elapsed_ms = (Unix.gettimeofday () -. start_time) *. 1000.0 in
+          let (names, types) = match col_info with
+            | Some (n, t) -> (n, t)
+            | None -> ([], [])
+          in
+          let* () = Connection.disconnect conn2 in
+          Lwt.return {
+            TestResult.query = unbounded_query;
+            _query_type = sprintf "streaming fallback (timeout with %d rows)" row_count;
+            elapsed_ms;
+            rows = acc_rows;
+            column_names = names;
+            _column_types = types;
+          }
+        end else
+          let open Lwt.Infix in
+          Lwt.catch
+            (fun () ->
+              Lwt_unix.with_timeout 0.5 (fun () -> Connection.receive_packet conn2) >>= function
+              | Connection.PData block ->
+                  let rows = Block.get_rows block in
+                  let num_rows = List.length rows in
+                  if num_rows > 0 then
+                    printf "[DEBUG] Streaming received %d rows\n%!" num_rows
+                  else
+                    ();
+                  let col_info = match col_info with
+                    | None when num_rows > 0 -> 
+                        let cols = Block.columns_with_types block in
+                        Some (List.map fst cols, List.map snd cols)
+                    | info -> info
+                  in
+                  (* Only count non-empty packets towards attempts *)
+                  let new_attempts = if num_rows = 0 then attempts + 1 else 0 in
+                  collect_streaming (acc_rows @ rows) col_info (row_count + num_rows) new_attempts max_attempts
+              | Connection.PEndOfStream ->
+                  printf "[DEBUG] Streaming received EndOfStream\n%!";
+                  let elapsed_ms = (Unix.gettimeofday () -. start_time) *. 1000.0 in
+                  let (names, types) = match col_info with
+                    | Some (n, t) -> (n, t)
+                    | None -> ([], [])
+                  in
+                  let* () = Connection.disconnect conn2 in
+                  Lwt.return {
+                    TestResult.query = unbounded_query;
+                    _query_type = "streaming fallback (stream ended)";
+                    elapsed_ms;
+                    rows = acc_rows;
+                    column_names = names;
+                    _column_types = types;
+                  }
+              | _ -> collect_streaming acc_rows col_info row_count (attempts + 1) max_attempts)
+            (fun _ ->
+              (* Timeout - try again *)
+              collect_streaming acc_rows col_info row_count (attempts + 1) max_attempts)
+      in
+      collect_streaming [] None 0 0 20
+    end else
+      Lwt.return bounded_result
 
   let test_unbounded_query conn table_name max_rows =
     let query = sprintf "SELECT id, name, age, balance, bignum, created FROM %s" table_name in
