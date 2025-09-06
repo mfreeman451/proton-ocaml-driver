@@ -123,17 +123,37 @@ let send_native_batch inserter (rows: value list list) (columns: (string * strin
             in
             await_header () >>= fun () ->
 
+            (* Transpose rows -> columns in O(n·m) *)
+            let transpose_rows (rows : value list list) : value array array =
+              match rows with
+              | [] -> [||]
+              | r0 :: _ ->
+                  let cols = List.length r0 in
+                  let n = List.length rows in
+                  let out = Array.init cols (fun _ -> Array.make n VNull) in
+                  let rec fill r_idx = function
+                    | [] -> ()
+                    | row :: tl ->
+                        let rec fill_row c_idx = function
+                          | [] -> ()
+                          | v :: vs -> out.(c_idx).(r_idx) <- v; fill_row (c_idx+1) vs
+                        in
+                        fill_row 0 row; fill (r_idx+1) tl
+                  in
+                  fill 0 rows; out
+            in
+
             (* 3. Send data blocks (chunked if needed). *)
             let rows_per_block = max 1 (min inserter.config.max_batch_size 100_000) in
             let chunks = chunk_rows rows rows_per_block in
             let send_one_chunk ch =
-              let n = List.length ch in
+              let cols_arrays = transpose_rows ch in
               let block_columns =
                 List.mapi (fun i (name, type_spec) ->
-                  let column_data = Array.of_list (List.map (fun row -> List.nth row i) ch) in
-                  { Block.name; type_spec; data = column_data }
+                  { Block.name = name; type_spec; data = cols_arrays.(i) }
                 ) columns
               in
+              let n = if Array.length cols_arrays = 0 then 0 else Array.length cols_arrays.(0) in
               let data_block = { Block.info = Block_info.{ is_overflows=false; bucket_num = -1 }; columns = block_columns; n_rows = n } in
               Connection.send_data_block inserter.connection data_block
             in
