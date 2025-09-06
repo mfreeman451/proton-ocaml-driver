@@ -54,3 +54,15 @@ watch:
 # Run tests in watch mode
 test-watch:
 	opam exec -- dune test --watch
+
+# Run live tests against real Proton database
+livetest:
+	@echo "Running live tests against Proton database..."
+	@opam exec -- dune build @livetest
+
+# Run end-to-end tests (alias for livetest)
+e2e: livetest
+
+# Run live test executable directly
+test-live:
+	@opam exec -- dune exec test_live/test_live.exe
