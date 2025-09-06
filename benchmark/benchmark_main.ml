@@ -30,7 +30,7 @@ let bench_async_batch_insert count =
   let client = Client.create ~host ~port ~compression:Compress.None () in
   let table_name = sprintf "bench_async_%d" (Random.int 100000) in
   
-  printf "Setting up table for %d async batch inserts...\n%!" count;
+  (* Silent setup to keep output clean *)
   let* () = 
     let drop_sql = sprintf "DROP STREAM IF EXISTS %s" table_name in
     let create_sql = sprintf {|
@@ -48,8 +48,6 @@ let bench_async_batch_insert count =
   let rows = generate_batch_data count in
   let columns = [("id", "int32"); ("name", "string"); ("value", "float64")] in
   
-  printf "Starting async batch insert of %d rows...\n%!" count;
-  
   let* (_, elapsed) = time_it_lwt (sprintf "ASYNC_BATCH_INSERT_%d_ROWS" count) (fun () ->
     (* Use the high-level async batch insert from Client *)
     Client.insert_rows ~columns client table_name rows
@@ -66,13 +64,9 @@ let bench_async_batch_insert count =
         | _ -> -1)
     | _ -> -1
   in
-  if verified <> count then
-    printf "⚠️  Verification mismatch: expected %d, got %d\n%!" count verified
-  else
-    printf "✅ Verified %d rows inserted\n%!" verified;
-
   let rate = float_of_int count /. elapsed in
-  printf "✅ %d rows inserted at %.0f rows/second (ASYNC BATCH)\n\n%!" count rate;
+  printf "async-batch: %7d rows | %6.2fs | %8.0f rows/s | verified=%b\n%!"
+    count elapsed rate (verified = count);
   
   let* _ = Client.execute client (sprintf "DROP STREAM IF EXISTS %s" table_name) in
   Lwt.return rate
@@ -83,7 +77,7 @@ let bench_manual_async_insert count batch_size =
   let conn = Connection.create ~host ~port ~compression:Compress.None () in
   let table_name = sprintf "bench_manual_%d" (Random.int 100000) in
   
-  printf "Setting up table for %d manual async inserts (batch size: %d)...\n%!" count batch_size;
+  (* Silent setup to keep output clean *)
   let client = Client.create ~host ~port ~compression:Compress.None () in
   let* () = 
     let drop_sql = sprintf "DROP STREAM IF EXISTS %s" table_name in
@@ -108,8 +102,6 @@ let bench_manual_async_insert count batch_size =
     flush_interval = 1.0;  (* Flush every 1 second *)
   } in
   
-  printf "Starting manual async insert of %d rows (batch size: %d)...\n%!" count batch_size;
-  
   let* (_, elapsed) = time_it_lwt (sprintf "MANUAL_ASYNC_%d_BATCH_%d" count batch_size) (fun () ->
     let inserter = Async_insert.create config conn in
     Async_insert.start inserter;
@@ -129,13 +121,9 @@ let bench_manual_async_insert count batch_size =
         | _ -> -1)
     | _ -> -1
   in
-  if verified <> count then
-    printf "⚠️  Verification mismatch: expected %d, got %d\n%!" count verified
-  else
-    printf "✅ Verified %d rows inserted\n%!" verified;
-
   let rate = float_of_int count /. elapsed in
-  printf "✅ %d rows inserted at %.0f rows/second (MANUAL ASYNC, batch=%d)\n\n%!" count rate batch_size;
+  printf "manual-async: %7d rows (batch=%4d) | %6.2fs | %8.0f rows/s | verified=%b\n%!"
+    count batch_size elapsed rate (verified = count);
   
   let* () = Connection.disconnect conn in
   Lwt.return rate

@@ -85,8 +85,36 @@ let escape_sql_string s =
   String.iter (fun c -> if c = '\'' then Buffer.add_string buf "''" else Buffer.add_char buf c) s;
   Buffer.contents buf
 
-(* Build an INSERT ... SELECT ... UNION ALL statement from rows for broad compatibility. *)
-let build_insert_select_sql table_name (columns: (string * string) list) (rows: value list list) : string =
+(* Render a value as SQL expression, casting to declared type when needed. *)
+let sql_expr_of_value (v:value) (type_spec:string) : string =
+  let t = String.lowercase_ascii (String.trim type_spec) in
+  match v, t with
+  | VInt32 n, _ -> Printf.sprintf "to_int32(%ld)" n
+  | VInt64 n, _ -> Printf.sprintf "to_int64(%Ld)" n
+  | VUInt32 n, _ -> Printf.sprintf "to_uint32(%ld)" n
+  | VUInt64 n, _ -> Printf.sprintf "to_uint64(%Ld)" n
+  | VFloat64 f, _ -> Printf.sprintf "to_float64(%.*f)" 6 f
+  | VString s, _ -> Printf.sprintf "'%s'" (escape_sql_string s)
+  | _ -> failwith "Unsupported value type for SQL insert"
+
+(* Build an INSERT ... VALUES (...), (...) statement from rows. *)
+let _build_insert_values_sql table_name (columns: (string * string) list) (rows: value list list) : string =
+  let col_names = columns |> List.map fst |> String.concat ", " in
+  let render_row row =
+    let values =
+      List.mapi (fun i v ->
+        let (_name, type_spec) = List.nth columns i in
+        sql_expr_of_value v type_spec
+      ) row
+      |> String.concat ", "
+    in
+    Printf.sprintf "(%s)" values
+  in
+  let values_clause = rows |> List.map render_row |> String.concat ", " in
+  Printf.sprintf "INSERT INTO %s (%s) VALUES %s" table_name col_names values_clause
+
+(* Build an INSERT ... SELECT ... UNION ALL statement from rows for broad compatibility (fallback). *)
+let _build_insert_select_sql table_name (columns: (string * string) list) (rows: value list list) : string =
   let col_names = columns |> List.map fst |> String.concat ", " in
   let expr_of (v:value) (type_spec:string) : string =
     let t = String.lowercase_ascii (String.trim type_spec) in
@@ -112,7 +140,25 @@ let build_insert_select_sql table_name (columns: (string * string) list) (rows: 
   let union_selects = rows |> List.map select_of_row |> String.concat " UNION ALL " in
   Printf.sprintf "INSERT INTO %s (%s) %s" table_name col_names union_selects
 
-(* Send a batch to the database using a SQL path (INSERT ... SELECT ...). *)
+(* Lightweight debug logging for async insert; opt-in via PROTON_INSERT_DEBUG *)
+let env_insert_debug () =
+  match Sys.getenv_opt "PROTON_INSERT_DEBUG" with
+  | Some ("1" | "true" | "TRUE" | "yes" | "YES") -> true
+  | _ -> false
+
+let logf fmt =
+  if env_insert_debug () then Printf.printf fmt else Printf.ifprintf stdout fmt
+
+let chunk_list lst chunk_size =
+  let rec aux acc current n = function
+    | [] -> List.rev (if current = [] then acc else (List.rev current)::acc)
+    | x::xs ->
+        if n = 0 then aux ((List.rev current)::acc) [x] (chunk_size-1) xs
+        else aux acc (x::current) (n-1) xs
+  in
+  aux [] [] chunk_size lst
+
+(* Send a batch to the database using a SQL path (INSERT ... SELECT ...), chunked to avoid overly large statements. *)
 let send_batch inserter (rows: value list list) (columns: (string * string) list) =
   let rec retry_send attempt =
     if attempt > inserter.config.max_retries then
@@ -121,18 +167,26 @@ let send_batch inserter (rows: value list list) (columns: (string * string) list
       Lwt.catch
         (fun () ->
           if columns = [] then Lwt.fail_with "Async_insert: columns must be provided for SQL path" else
-          let sql = build_insert_select_sql inserter.config.table_name columns rows in
-          Printf.printf "Executing SQL batch insert (%d rows)…\n%!" (List.length rows);
-          Connection.send_query inserter.connection sql >>= fun () ->
-          let rec drain () =
-            Connection.receive_packet inserter.connection >>= function
-            | PEndOfStream -> Lwt.return_unit
-            | _ -> drain ()
+          let chunk_size = min inserter.config.max_batch_size 500 in
+          let chunks = chunk_list rows chunk_size in
+          let rec insert_chunks = function
+            | [] -> Lwt.return_unit
+            | ch::rest ->
+                let sql = _build_insert_select_sql inserter.config.table_name columns ch in
+                logf "Executing SQL batch insert chunk (%d rows)…\n%!" (List.length ch);
+                Connection.send_query inserter.connection sql >>= fun () ->
+                let rec drain () =
+                  Connection.receive_packet inserter.connection >>= function
+                  | PEndOfStream -> Lwt.return_unit
+                  | _ -> drain ()
+                in
+                Lwt_unix.with_timeout inserter.config.response_timeout drain >>= fun () ->
+                insert_chunks rest
           in
-          Lwt_unix.with_timeout inserter.config.response_timeout drain
+          insert_chunks chunks
         )
         (fun exn ->
-          Printf.printf "Insert attempt %d failed: %s\n" attempt (Printexc.to_string exn);
+          logf "Insert attempt %d failed: %s\n%!" attempt (Printexc.to_string exn);
           let delay = inserter.config.retry_delay *. (float_of_int attempt) in
           (* Reset connection before retry to clear any partial state *)
           Connection.disconnect inserter.connection >>= fun () ->
@@ -159,7 +213,7 @@ let flush_buffer inserter =
       inserter.buffer.byte_size <- 0;
       inserter.buffer.last_flush <- Unix.gettimeofday ();
       
-      Printf.printf "Flushing batch of %d rows\n%!" (List.length rows);
+      logf "Flushing batch of %d rows\n%!" (List.length rows);
       send_batch inserter rows columns
   )
 
@@ -180,7 +234,7 @@ let rec flush_loop inserter =
       Lwt.catch
         (fun () -> flush_buffer inserter)
         (fun exn -> 
-          Printf.printf "Flush error: %s\n" (Printexc.to_string exn);
+          logf "Flush error: %s\n%!" (Printexc.to_string exn);
           Lwt.return_unit) >>= fun () ->
       flush_loop inserter
     else
@@ -209,7 +263,7 @@ let start inserter =
     let flush_task = flush_loop inserter in
     let timer_task = timer_flush_loop inserter in
     inserter.flush_promise <- Some (Lwt.join [flush_task; timer_task]);
-    Printf.printf "Started async inserter for table %s\n%!" inserter.config.table_name
+    logf "Started async inserter for table %s\n%!" inserter.config.table_name
   )
 
 (* Stop the async inserter *)
