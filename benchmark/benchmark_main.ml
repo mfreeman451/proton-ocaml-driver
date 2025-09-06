@@ -418,6 +418,15 @@ let run_benchmarks () =
   printf "=== 🚀 Proton OCaml Driver ASYNC Performance Benchmarks 🚀 ===\n\n%!";
   (* Run local micro-benchmarks first (no server needed) *)
   run_reader_micro_benchmarks ();
+  (* Allow running only the reader micro-benchmarks via env var *)
+  let only_reader = match Sys.getenv_opt "ONLY_READER_MICRO" with
+    | Some ("1"|"true"|"TRUE"|"yes"|"YES") -> true
+    | _ -> false
+  in
+  if only_reader then (
+    printf "\nONLY_READER_MICRO=1 set: skipping network benchmarks.\n%!";
+    Lwt.return_unit
+  ) else (
   
   printf "Testing connection to %s:%d...\n%!" host port;
   let* () = 
@@ -446,5 +455,6 @@ let run_benchmarks () =
   printf "\n🎉 All async benchmarks completed!\n%!";
  
   Lwt.return_unit
+  )
 
 let () = Lwt_main.run (run_benchmarks ())

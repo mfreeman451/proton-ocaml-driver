@@ -4,10 +4,10 @@ open Binary
 let reader_lowcardinality_of_spec ~(resolver:(string -> (in_channel -> int -> value array))) (s:string)
   : ((in_channel -> int -> value array)) option =
   let s = String.lowercase_ascii (String.trim s) in
-  if String.length s >= 15 && String.sub s 0 15 = "lowcardinality(" then (
+  if has_prefix s "lowcardinality(" then (
     let inner = String.sub s 15 (String.length s - 16) |> String.trim in
     let inner_nullable, inner_base =
-      if String.length inner >= 9 && String.sub inner 0 9 = "nullable(" then true, (String.sub inner 9 (String.length inner - 10) |> String.trim) else false, inner in
+      if has_prefix inner "nullable(" then true, (String.sub inner 9 (String.length inner - 10) |> String.trim) else false, inner in
     let dict_reader = resolver inner_base in
     Some (fun ic n ->
       let index_ser = read_uint64_le ic in
@@ -33,10 +33,10 @@ let reader_lowcardinality_of_spec ~(resolver:(string -> (in_channel -> int -> va
 let reader_lowcardinality_of_spec_br ~(resolver:(string -> (Buffered_reader.t -> int -> value array))) (s:string)
   : ((Buffered_reader.t -> int -> value array)) option =
   let s = String.lowercase_ascii (String.trim s) in
-  if String.length s >= 15 && String.sub s 0 15 = "lowcardinality(" then (
+  if has_prefix s "lowcardinality(" then (
     let inner = String.sub s 15 (String.length s - 16) |> String.trim in
     let inner_nullable, inner_base =
-      if String.length inner >= 9 && String.sub inner 0 9 = "nullable(" then true, (String.sub inner 9 (String.length inner - 10) |> String.trim) else false, inner in
+      if has_prefix inner "nullable(" then true, (String.sub inner 9 (String.length inner - 10) |> String.trim) else false, inner in
     let dict_reader = resolver inner_base in
     Some (fun br n ->
       let index_ser = read_uint64_le_br br in
@@ -58,4 +58,3 @@ let reader_lowcardinality_of_spec_br ~(resolver:(string -> (Buffered_reader.t ->
       done;
       res)
   ) else None
-

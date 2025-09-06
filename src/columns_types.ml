@@ -14,6 +14,18 @@ type value =
   | VMap of (value * value) list
   | VTuple of value list
 
+(* Small inlineable helper to avoid substring allocations when checking prefixes *)
+let[@inline] has_prefix (s:string) (p:string) : bool =
+  let ls = String.length s and lp = String.length p in
+  if ls < lp then false else (
+    let rec loop i =
+      if i = lp then true
+      else if s.[i] <> p.[i] then false
+      else loop (i+1)
+    in
+    loop 0
+  )
+
 let rec value_to_string = function
   | VNull -> "NULL"
   | VString s -> s
@@ -37,4 +49,3 @@ let rec value_to_string = function
       let pair_strs = List.map (fun (k, v) -> value_to_string k ^ ":" ^ value_to_string v) pairs in
       "{" ^ String.concat "," pair_strs ^ "}"
   | VTuple vs -> "(" ^ String.concat "," (List.map value_to_string vs) ^ ")"
-

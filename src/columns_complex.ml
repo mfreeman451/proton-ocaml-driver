@@ -2,7 +2,7 @@ open Columns_types
 open Binary
 
 let trim = String.trim
-let starts_with ~prefix s = let n = String.length prefix in String.length s >= n && String.sub s 0 n = prefix
+let starts_with ~prefix s = has_prefix s prefix
 
 let parse_array_element_type s =
   if not (String.contains s '(') then failwith "Invalid array type" else
@@ -105,4 +105,3 @@ let reader_complex_of_spec_br ~(resolver:(string -> (Buffered_reader.t -> int ->
         let vals = inner_reader br n in
         Array.mapi (fun i x -> if nulls.(i) then VNull else x) vals)
   | _ -> None
-
