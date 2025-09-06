@@ -8,6 +8,7 @@ type config = {
   flush_interval: float;      (** Seconds between automatic flushes *)
   max_retries: int;           (** Maximum retry attempts on failure *)
   retry_delay: float;         (** Initial retry delay in seconds *)
+  response_timeout: float;    (** Seconds to wait for server end-of-stream *)
 }
 
 (** Create default configuration for a table *)

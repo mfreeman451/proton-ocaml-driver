@@ -1,5 +1,4 @@
-(* Async Insert Implementation for Proton OCaml Driver *)
-
+(* file: async_insert.ml *)
 open Lwt.Infix
 open Columns
 
@@ -11,15 +10,17 @@ type config = {
   flush_interval: float;      (* Seconds between automatic flushes *)
   max_retries: int;           (* Maximum retry attempts on failure *)
   retry_delay: float;         (* Initial retry delay in seconds *)
+  response_timeout: float;    (* Seconds to wait for server end-of-stream *)
 }
 
 let default_config table_name = {
   table_name;
-  max_batch_size = 1000;
-  max_batch_bytes = 1_048_576; (* 1MB *)
-  flush_interval = 5.0;        (* 5 seconds *)
+  max_batch_size = 100_000;    (* Increased default batch size for native protocol *)
+  max_batch_bytes = 16_777_216; (* 16MB *)
+  flush_interval = 1.0;        (* 1 second *)
   max_retries = 3;
   retry_delay = 1.0;
+  response_timeout = 60.0;     (* Increased timeout for larger batches *)
 }
 
 (* Async insert buffer state *)
@@ -49,13 +50,14 @@ let estimate_row_size (row: value list) : int =
     acc + match value with
     | VNull -> 1
     | VString s -> String.length s + 8
-    | VInt32 _ | VUInt32 _ | VFloat64 _ -> 8
-    | VInt64 _ | VUInt64 _ -> 8
-    | VDateTime _ | VDateTime64 _ -> 16
-    | VEnum8 (s, _) -> String.length s + 4
-    | VEnum16 (s, _) -> String.length s + 4
+    | VInt32 _ | VUInt32 _ -> 4
+    | VInt64 _ | VUInt64 _ | VFloat64 _ -> 8
+    | VDateTime _ -> 4
+    | VDateTime64 _ -> 8
+    | VEnum8 _ -> 1
+    | VEnum16 _ -> 2
     | VArray _ | VMap _ | VTuple _ -> 64 (* Rough estimate for complex types *)
-  ) 16 row (* Base overhead per row *)
+  ) 0 row
 
 (* Create a new async inserter *)
 let create config connection =
@@ -77,73 +79,88 @@ let create config connection =
     flush_promise = None;
   }
 
-(* Send a batch to the database using binary Data packet protocol *)
-let send_batch inserter (rows: value list list) (columns: (string * string) list) =
-  let rec retry_send attempt =
-    if attempt > inserter.config.max_retries then
-      Lwt.fail_with (Printf.sprintf "Failed to insert batch after %d retries" inserter.config.max_retries)
-    else
-      Lwt.catch
-        (fun () ->
-          (* Send INSERT query first to prepare for data *)
-          let insert_query = Printf.sprintf "INSERT INTO %s VALUES" inserter.config.table_name in
-          Connection.send_query inserter.connection insert_query >>= fun () ->
-          
-          (* Read the first block (should be a header block with column info) *)
-          Connection.receive_packet inserter.connection >>= function
-          | PData _header_block ->
-              (* Create data block from our rows *)
-              let n_rows = List.length rows in
-              let n_cols = List.length columns in
-              
-              (* Convert rows to column-oriented data *)
-              let column_data = Array.make n_cols [||] in
-              List.iteri (fun col_idx (_, _) ->
-                let col_values = Array.make n_rows (VString "") in
-                List.iteri (fun row_idx row ->
-                  if col_idx < List.length row then
-                    col_values.(row_idx) <- List.nth row col_idx
-                ) rows;
-                column_data.(col_idx) <- col_values
-              ) columns;
-              
-              (* Build block columns *)
-              let block_columns = List.mapi (fun i (name, type_spec) ->
-                { Block.name; type_spec; data = column_data.(i) }
-              ) columns in
-              
-              let data_block = {
-                Block.info = { Block_info.is_overflows = false; bucket_num = -1 };
-                columns = block_columns;
-                n_rows = n_rows;
-              } in
-              
-              (* Send the data block *)
-              Connection.send_data_block inserter.connection data_block >>= fun () ->
-              
-              (* Send empty block to signal end *)
-              let empty_block = {
-                Block.info = { Block_info.is_overflows = false; bucket_num = -1 };
-                columns = [];
-                n_rows = 0;
-              } in
-              Connection.send_data_block inserter.connection empty_block >>= fun () ->
-              
-              (* Read response packets until end of stream *)
-              let rec read_response () =
-                Connection.receive_packet inserter.connection >>= function
-                | PEndOfStream -> Lwt.return_unit
-                | _ -> read_response ()
-              in
-              read_response ()
-          | _ -> Lwt.fail_with "Expected header block after INSERT query")
-        (fun exn ->
-          Printf.printf "Insert attempt %d failed: %s\n" attempt (Printexc.to_string exn);
-          let delay = inserter.config.retry_delay *. (float_of_int attempt) in
-          Lwt_unix.sleep delay >>= fun () ->
-          retry_send (attempt + 1))
+(* Lightweight debug logging for async insert; opt-in via PROTON_INSERT_DEBUG *)
+let env_insert_debug () =
+  match Sys.getenv_opt "PROTON_INSERT_DEBUG" with
+  | Some ("1" | "true" | "TRUE" | "yes" | "YES") -> true
+  | _ -> false
+
+let logf fmt =
+  if env_insert_debug () then Printf.printf fmt else Printf.ifprintf stdout fmt
+
+(* Sends a batch using the high-performance native protocol. *)
+let chunk_rows rows chunk_size =
+  let rec loop acc cur n = function
+    | [] -> List.rev (if cur = [] then acc else (List.rev cur)::acc)
+    | x::xs -> if n = 0 then loop ((List.rev (x::cur))::acc) [] (chunk_size-1) xs else loop acc (x::cur) (n-1) xs
   in
-  retry_send 1
+  if chunk_size <= 0 then [rows] else loop [] [] (chunk_size-1) rows
+
+let send_native_batch inserter (rows: value list list) (columns: (string * string) list) =
+  let n_rows = List.length rows in
+  if n_rows = 0 then Lwt.return_unit
+  else
+    let rec retry_send attempt =
+      if attempt > inserter.config.max_retries then
+        Lwt.fail_with (Printf.sprintf "Failed to insert batch after %d retries" inserter.config.max_retries)
+      else
+        Lwt.catch
+          (fun () ->
+            let (names, _types) = List.split columns in
+            (* Use Native format for binary block streaming over the native protocol. *)
+            let insert_sql = Printf.sprintf "INSERT INTO %s (%s) FORMAT Native" inserter.config.table_name (String.concat ", " names) in
+
+            (* 1. Send the INSERT query, but don't signal end of data. *)
+            Connection.send_query_without_data_end inserter.connection insert_sql >>= fun () ->
+
+            (* 2. Wait for server-provided header block (schema). *)
+            let rec await_header () =
+              Connection.receive_packet inserter.connection >>= function
+              | PData b when b.n_rows = 0 && b.columns <> [] -> Lwt.return_unit
+              | PProgress | PProfileInfo | PTotals _ | PExtremes _ | PLog _ -> await_header ()
+              | PData _ -> await_header ()
+              | PEndOfStream -> Lwt.fail_with "Unexpected EndOfStream before data header"
+            in
+            await_header () >>= fun () ->
+
+            (* 3. Send data blocks (chunked if needed). *)
+            let rows_per_block = max 1 (min inserter.config.max_batch_size 100_000) in
+            let chunks = chunk_rows rows rows_per_block in
+            let send_one_chunk ch =
+              let n = List.length ch in
+              let block_columns =
+                List.mapi (fun i (name, type_spec) ->
+                  let column_data = Array.of_list (List.map (fun row -> List.nth row i) ch) in
+                  { Block.name; type_spec; data = column_data }
+                ) columns
+              in
+              let data_block = { Block.info = Block_info.{ is_overflows=false; bucket_num = -1 }; columns = block_columns; n_rows = n } in
+              Connection.send_data_block inserter.connection data_block
+            in
+            Lwt_list.iter_s send_one_chunk chunks >>= fun () ->
+
+            (* 4. Send an empty block to signify the end of the insert stream. *)
+            let empty_block = { Block.info = Block_info.{ is_overflows=false; bucket_num = -1 }; columns = []; n_rows = 0 } in
+            Connection.send_data_block inserter.connection empty_block >>= fun () ->
+
+            (* 5. Wait for the server to acknowledge completion. *)
+            let rec drain () =
+              Connection.receive_packet inserter.connection >>= function
+              | PEndOfStream -> Lwt.return_unit
+              | _ -> drain ()
+            in
+            Lwt_unix.with_timeout inserter.config.response_timeout drain
+          )
+          (fun exn ->
+            logf "Native insert attempt %d failed: %s\n%!" attempt (Printexc.to_string exn);
+            let delay = inserter.config.retry_delay *. (2. ** float_of_int (attempt - 1)) in
+            (* Reset connection before retry to clear any partial state *)
+            Connection.disconnect inserter.connection >>= fun () ->
+            Lwt_unix.sleep delay >>= fun () ->
+            retry_send (attempt + 1)
+          )
+    in
+    retry_send 1
 
 (* Flush the current buffer *)
 let flush_buffer inserter =
@@ -151,28 +168,32 @@ let flush_buffer inserter =
     if inserter.buffer.row_count = 0 then
       Lwt.return_unit
     else
-      let rows = List.rev inserter.buffer.rows in
-      let columns = match inserter.buffer.column_names, inserter.buffer.column_types with
+      let rows_to_send = List.rev inserter.buffer.rows in
+      let columns_spec = match inserter.buffer.column_names, inserter.buffer.column_types with
         | Some names, Some types -> List.combine names types
-        | _ -> [] (* Will be inferred from data *)
+        | _ -> failwith "Column names and types must be set before flushing"
       in
       
-      (* Reset buffer *)
+      (* Reset buffer before sending *)
       inserter.buffer.rows <- [];
       inserter.buffer.row_count <- 0;
       inserter.buffer.byte_size <- 0;
       inserter.buffer.last_flush <- Unix.gettimeofday ();
       
-      Printf.printf "Flushing batch of %d rows\n" (List.length rows);
-      send_batch inserter rows columns
+      logf "Flushing native batch of %d rows\n%!" (List.length rows_to_send);
+      
+      (* Use the new native batch sending function *)
+      send_native_batch inserter rows_to_send columns_spec
   )
 
 (* Check if buffer should be flushed *)
 let should_flush inserter =
   let now = Unix.gettimeofday () in
-  inserter.buffer.row_count >= inserter.config.max_batch_size ||
-  inserter.buffer.byte_size >= inserter.config.max_batch_bytes ||
-  (now -. inserter.buffer.last_flush) >= inserter.config.flush_interval
+  (inserter.buffer.row_count > 0 && (
+    inserter.buffer.row_count >= inserter.config.max_batch_size ||
+    inserter.buffer.byte_size >= inserter.config.max_batch_bytes ||
+    (now -. inserter.buffer.last_flush) >= inserter.config.flush_interval
+  ))
 
 (* Background flush loop *)
 let rec flush_loop inserter =
@@ -184,7 +205,7 @@ let rec flush_loop inserter =
       Lwt.catch
         (fun () -> flush_buffer inserter)
         (fun exn -> 
-          Printf.printf "Flush error: %s\n" (Printexc.to_string exn);
+          logf "Flush error: %s\n%!" (Printexc.to_string exn);
           Lwt.return_unit) >>= fun () ->
       flush_loop inserter
     else
@@ -213,7 +234,7 @@ let start inserter =
     let flush_task = flush_loop inserter in
     let timer_task = timer_flush_loop inserter in
     inserter.flush_promise <- Some (Lwt.join [flush_task; timer_task]);
-    Printf.printf "Started async inserter for table %s\n" inserter.config.table_name
+    logf "Started async inserter for table %s\n%!" inserter.config.table_name
   )
 
 (* Stop the async inserter *)
@@ -221,33 +242,32 @@ let stop inserter =
   if inserter.running then (
     inserter.running <- false;
     Lwt_condition.signal inserter.flush_condition ();
-    match inserter.flush_promise with
+    (match inserter.flush_promise with
     | Some promise -> 
-      Lwt.catch (fun () -> promise) (fun _ -> Lwt.return_unit) >>= fun () ->
-      flush_buffer inserter (* Final flush *)
-    | None -> flush_buffer inserter
+      Lwt.cancel promise;
+      Lwt.catch (fun () -> promise) (fun _ -> Lwt.return_unit)
+    | None -> Lwt.return_unit) >>= fun () ->
+    flush_buffer inserter (* Final flush *)
   ) else
     Lwt.return_unit
 
 (* Add a row to the buffer *)
 let add_row ?(columns=[]) inserter (row: value list) =
   Lwt_mutex.with_lock inserter.mutex (fun () ->
-    (* Set column info on first row if provided *)
-    if inserter.buffer.column_names = None && columns <> [] then (
-      let (names, types) = List.split columns in
-      inserter.buffer.column_names <- Some names;
-      inserter.buffer.column_types <- Some types;
-    );
-    
-    (* Add row to buffer *)
+    (if inserter.buffer.column_names = None then (
+       if columns = [] then Lwt.fail_with "Columns must be provided with the first row"
+       else (
+         let (names, types) = List.split columns in
+         inserter.buffer.column_names <- Some names;
+         inserter.buffer.column_types <- Some types;
+         Lwt.return_unit
+       )
+     ) else Lwt.return_unit) >>= fun () ->
     inserter.buffer.rows <- row :: inserter.buffer.rows;
     inserter.buffer.row_count <- inserter.buffer.row_count + 1;
     inserter.buffer.byte_size <- inserter.buffer.byte_size + estimate_row_size row;
-    
-    (* Check if we should flush *)
     if should_flush inserter then
       Lwt_condition.signal inserter.flush_condition ();
-    
     Lwt.return_unit
   )
 

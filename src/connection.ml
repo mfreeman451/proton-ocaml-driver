@@ -39,6 +39,18 @@ type t = {
   compression : Protocol.compression;
 }
 
+(* Ensure full writes on non-TLS sockets. Lwt_unix.write_string may write
+   fewer bytes than requested; loop until everything is sent. *)
+let rec write_all fd s off len =
+  if len = 0 then Lwt.return_unit
+  else
+    Lwt_unix.write_string fd s off len >>= fun n ->
+    if n = 0 then Lwt.fail End_of_file
+    else write_all fd s (off + n) (len - n)
+
+let writev_all fd ss =
+  Lwt_list.iter_s (fun s -> write_all fd s 0 (String.length s)) ss
+
 let default_tls_config = {
   enable_tls = false;  (* Changed to false by default for testing *)
   ca_cert_file = None;
@@ -204,7 +216,7 @@ let connect t =
 let disconnect t =
   (match t.tls with Some tls -> Tls_lwt.Unix.shutdown tls `read_write | None -> Lwt.return_unit) >>= fun () ->
   (match t.fd with Some fd -> (Lwt.catch (fun () -> Lwt_unix.close fd) (fun _ -> Lwt.return_unit)) | None -> Lwt.return_unit) >>= fun () ->
-  t.tls <- None; t.fd <- None; t.connected <- false; Lwt.return_unit
+  t.tls <- None; t.fd <- None; t.connected <- false; t.srv <- None; Lwt.return_unit
 
 let write_settings_as_strings buf settings ~settings_is_important =
   List.iter (fun (k,v) ->
@@ -217,7 +229,7 @@ let write_settings_as_strings buf settings ~settings_is_important =
 let send_hello t =
   let writev_fn = match t.tls, t.fd with
     | Some tls, _ -> (fun ss -> Tls_lwt.Unix.writev tls ss)
-    | None, Some fd -> (fun ss -> Lwt_list.iter_s (fun s -> Lwt_unix.write_string fd s 0 (String.length s) >|= ignore) ss)
+    | None, Some fd -> (fun ss -> writev_all fd ss)
     | _ -> failwith "not connected"
   in
   let buf = Buffer.create 256 in
@@ -277,9 +289,15 @@ let send_data_block t (block: Block.t) =
   force_connect t >>= fun () ->
   let writev_fn = match t.tls, t.fd with
     | Some tls, _ -> (fun ss -> Tls_lwt.Unix.writev tls ss)
-    | None, Some fd -> (fun ss -> Lwt_list.iter_s (fun s -> Lwt_unix.write_string fd s 0 (String.length s) >|= ignore) ss)
+    | None, Some fd -> (fun ss -> writev_all fd ss)
     | _ -> failwith "not connected"
   in
+  (* Debug info about the outgoing block *)
+  let is_header = (block.n_rows = 0 && List.length block.columns > 0) in
+  let is_terminator = (block.n_rows = 0 && List.length block.columns = 0) in
+  debugf "[proton] send_data_block: cols=%d rows=%d kind=%s\n"
+    (List.length block.columns) block.n_rows
+    (if is_header then "header" else if is_terminator then "terminator" else "data");
   (* Build block payload (info + columns + rows) in a separate buffer. *)
   let buf_block = Buffer.create 4096 in
   (* Write block info *)
@@ -319,7 +337,7 @@ let send_query t ?(query_id="") (query:string) =
   force_connect t >>= fun () ->
   let writev_fn = match t.tls, t.fd with
     | Some tls, _ -> (fun ss -> Tls_lwt.Unix.writev tls ss)
-    | None, Some fd -> (fun ss -> Lwt_list.iter_s (fun s -> Lwt_unix.write_string fd s 0 (String.length s) >|= ignore) ss)
+    | None, Some fd -> (fun ss -> writev_all fd ss)
     | _ -> failwith "not connected"
   in
   let buf = Buffer.create 512 in
@@ -359,6 +377,59 @@ let send_query t ?(query_id="") (query:string) =
   write_varint_int_to_buffer buf (String.length query); Buffer.add_string buf query;
   write_buf writev_fn buf >>= fun () ->
   (* Per Proton/ClickHouse protocol, send an empty Data block to indicate no external tables / end of data. *)
+  let empty_block = { Block.info = { Block_info.is_overflows=false; bucket_num = -1 }; columns = []; n_rows = 0 } in
+  send_data_block t empty_block
+
+(* Variant used for INSERT via native protocol: do NOT send the trailing
+   empty Data block here, because the client must immediately stream the
+   data blocks (followed by a final empty block) after the Query. *)
+let send_query_without_data_end t ?(query_id="") (query:string) =
+  force_connect t >>= fun () ->
+  let writev_fn = match t.tls, t.fd with
+    | Some tls, _ -> (fun ss -> Tls_lwt.Unix.writev tls ss)
+    | None, Some fd -> (fun ss -> writev_all fd ss)
+    | _ -> failwith "not connected"
+  in
+  let buf = Buffer.create 512 in
+  write_varint_int_to_buffer buf (client_packet_to_int Query);
+  write_varint_int_to_buffer buf (String.length query_id); Buffer.add_string buf query_id;
+  let revision = match t.srv with Some s -> s.revision | None -> failwith "no server revision" in
+  if revision >= Defines.dbms_min_revision_with_client_info then begin
+    Buffer.add_char buf (Char.chr 1);
+    write_varint_int_to_buffer buf 0; write_varint_int_to_buffer buf 0; write_varint_int_to_buffer buf (String.length "0.0.0.0:0"); Buffer.add_string buf "0.0.0.0:0";
+    if revision >= Defines.dbms_min_protocol_version_with_initial_query_start_time then Buffer.add_string buf "\x00\x00\x00\x00\x00\x00\x00\x00";
+    Buffer.add_char buf (Char.chr 1);
+    let user_env = try Sys.getenv "USER" with _ -> "" in
+    write_varint_int_to_buffer buf (String.length user_env); Buffer.add_string buf user_env;
+    let hostn = Unix.gethostname () in
+    write_varint_int_to_buffer buf (String.length hostn); Buffer.add_string buf hostn;
+    let clientn = Defines.dbms_name ^ " " ^ Defines.client_name in
+    write_varint_int_to_buffer buf (String.length clientn); Buffer.add_string buf clientn;
+    write_varint_int_to_buffer buf Defines.client_version_major;
+    write_varint_int_to_buffer buf Defines.client_version_minor;
+    write_varint_int_to_buffer buf Defines.client_revision;
+    if revision >= Defines.dbms_min_revision_with_quota_key_in_client_info then write_varint_int_to_buffer buf 0;
+    if revision >= Defines.dbms_min_protocol_version_with_distributed_depth then write_varint_int_to_buffer buf 0;
+    if revision >= Defines.dbms_min_revision_with_version_patch then write_varint_int_to_buffer buf Defines.client_version_patch;
+    if revision >= Defines.dbms_min_revision_with_opentelemetry then Buffer.add_char buf (Char.chr 0);
+    if revision >= Defines.dbms_min_revision_with_parallel_replicas then (
+      (* collaborate_with_initiator, count_participating_replicas, number_of_current_replica *)
+      write_varint_int_to_buffer buf 0;
+      write_varint_int_to_buffer buf 0;
+      write_varint_int_to_buffer buf 0
+    )
+  end;
+  let settings_as_strings = match t.srv with Some s -> s.revision >= Defines.dbms_min_revision_with_settings_serialized_as_strings | None -> true in
+  if settings_as_strings then write_settings_as_strings buf t.ctx.settings ~settings_is_important:false else write_varint_int_to_buffer buf 0;
+  if revision >= Defines.dbms_min_revision_with_interserver_secret then write_varint_int_to_buffer buf 0;
+  write_varint_int_to_buffer buf (qps_to_int Complete);
+  write_varint_int_to_buffer buf (compression_to_int t.compression);
+  write_varint_int_to_buffer buf (String.length query); Buffer.add_string buf query;
+  debugf "[proton] send_query_without_data_end: %s\n" query;
+  (* For INSERT ... FORMAT Native, ClickHouse/Proton expects an explicit end
+     of external tables: send a zero-column, zero-row Data block first. Then
+     the client will send the header, data block(s), and a final terminator. *)
+  write_buf writev_fn buf >>= fun () ->
   let empty_block = { Block.info = { Block_info.is_overflows=false; bucket_num = -1 }; columns = []; n_rows = 0 } in
   send_data_block t empty_block
 
