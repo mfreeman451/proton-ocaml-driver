@@ -98,7 +98,7 @@ let bench_reader_for_spec ~spec ~rows ~loops make_bytes =
   (* Baseline: recompile reader every iteration (no cache) *)
   let (_, cold_s) = time (fun () ->
     for _i = 1 to loops do
-      let br = Buffered_reader.create_from_bytes payload in
+      let br = Buffered_reader.create_from_bytes_no_copy payload in
       let reader = Columns.compile_reader_br spec in
       ignore (reader br rows)
     done) in
@@ -107,7 +107,7 @@ let bench_reader_for_spec ~spec ~rows ~loops make_bytes =
   let (_, warm_s) = time (fun () ->
     let reader = Columns.reader_of_spec_br spec in
     for _i = 1 to loops do
-      let br = Buffered_reader.create_from_bytes payload in
+      let br = Buffered_reader.create_from_bytes_no_copy payload in
       ignore (reader br rows)
     done) in
   let stats = Columns.get_cache_stats () in

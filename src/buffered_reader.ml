@@ -43,6 +43,17 @@ let create_from_bytes (src:bytes) =
     fill_func;
   }
 
+(* Create a buffered reader that aliases the provided bytes without copying. *)
+let create_from_bytes_no_copy (src:bytes) =
+  {
+    buffer = src;
+    pos = 0;
+    valid = Bytes.length src;
+    eof = false;
+    (* One-shot: no refills; subsequent reads past end will mark eof via fill_buffer. *)
+    fill_func = (fun _ _ _ -> 0);
+  }
+
 (* Note: TLS is handled in async path. For parsing bytes, use create_from_bytes. *)
 
 (* Fill buffer with more data *)

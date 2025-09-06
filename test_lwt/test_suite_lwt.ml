@@ -53,7 +53,7 @@ let build_uncompressed_block ~cols =
   Buffer.contents buf |> Bytes.of_string
 
 let read_block_from_bytes (bs:bytes) : Block.t =
-  let br = Buffered_reader.create_from_bytes bs in
+  let br = Buffered_reader.create_from_bytes_no_copy bs in
   Block.read_block_br ~revision:Defines.dbms_min_revision_with_block_info br
 
 let test_uncompressed_block_parse () =
@@ -433,7 +433,7 @@ let test_datetime_binary_roundtrip () =
   Bytes.set_uint8 bytes_data 3 d;
   
   (* Create buffered reader from written data *)
-  let br = Buffered_reader.create_from_bytes bytes_data in
+  let br = Buffered_reader.create_from_bytes_no_copy bytes_data in
   
   (* Read using DateTime reader - test without timezone first *)
   let reader = Columns.reader_of_spec_br "datetime" in
@@ -456,7 +456,7 @@ let test_datetime64_binary_roundtrip () =
   Binary.bytes_set_int64_le bytes_data 0 test_value;
   
   (* Create buffered reader from written data *)
-  let br = Buffered_reader.create_from_bytes bytes_data in
+  let br = Buffered_reader.create_from_bytes_no_copy bytes_data in
   
   (* Read using DateTime64 reader - test without timezone first *)
   let reader = Columns.reader_of_spec_br "datetime64(3)" in
@@ -489,7 +489,7 @@ let test_multiple_datetime_values () =
     Bytes.set_uint8 bytes_data (offset + 3) d;
   ) timestamps;
   
-  let br = Buffered_reader.create_from_bytes bytes_data in
+  let br = Buffered_reader.create_from_bytes_no_copy bytes_data in
   let reader = Columns.reader_of_spec_br "datetime" in
   let values = reader br 3 in
   

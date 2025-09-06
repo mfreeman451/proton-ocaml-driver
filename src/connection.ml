@@ -541,11 +541,11 @@ let receive_data_block t ~compressible read_fn : Block.t Lwt.t =
   read_str_lwt read_fn >>= fun _table_name ->
   if compressible && t.compression <> Compress.None then (
     read_compressed_block_lwt read_fn >>= fun decompressed ->
-    let br = Buffered_reader.create_from_bytes decompressed in
+    let br = Buffered_reader.create_from_bytes_no_copy decompressed in
     Lwt.return (Block.read_block_br ~revision br)
   ) else (
     read_uncompressed_block_lwt read_fn >>= fun bytes ->
-    let br = Buffered_reader.create_from_bytes bytes in
+    let br = Buffered_reader.create_from_bytes_no_copy bytes in
     Lwt.return (Block.read_block_br ~revision br)
   )
 
