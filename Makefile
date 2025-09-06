@@ -19,6 +19,11 @@ test-silent:
 test-verbose:
 	@opam exec -- dune test --verbose
 
+# Reader micro-benchmark only (no server needed)
+bench-readers:
+	@echo "Running reader micro-benchmarks (ONLY_READER_MICRO=1)"
+	@ONLY_READER_MICRO=1 opam exec -- dune exec benchmark/benchmark_main.exe
+
 # Clean build artifacts  
 clean:
 	opam exec -- dune clean

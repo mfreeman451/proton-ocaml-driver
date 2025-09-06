@@ -52,17 +52,13 @@ let build_uncompressed_block ~cols =
   ) cols;
   Buffer.contents buf |> Bytes.of_string
 
+let read_block_from_bytes (bs:bytes) : Block.t =
+  let br = Buffered_reader.create_from_bytes bs in
+  Block.read_block_br ~revision:Defines.dbms_min_revision_with_block_info br
+
 let test_uncompressed_block_parse () =
   let bs = build_uncompressed_block ~cols:[ ("c1","String",2) ] in
-  let pos = ref 0 in
-  let read_fn buf off len =
-    let remaining = Bytes.length bs - !pos in
-    let to_copy = min len remaining in
-    Bytes.blit bs !pos buf off to_copy; pos := !pos + to_copy; Lwt.return to_copy
-  in
-  let t = Connection.create ~compression:Compress.None () in
-  t.Connection.srv <- Some { Context.name=""; version_major=0; version_minor=0; version_patch=0; revision=Defines.dbms_min_revision_with_block_info; timezone=None; display_name="" };
-  match Lwt_main.run (Connection.receive_data t ~raw:true read_fn) with
+  match read_block_from_bytes bs with
   | { Block.n_rows=2; columns=[{ Block.name; type_spec; data }]; _ } ->
       Alcotest.(check string) "col name" "c1" name;
       Alcotest.(check string) "type" "String" type_spec;
@@ -86,11 +82,7 @@ let test_exception_reader () =
 let test_enum_and_fixedstring () =
   let cols = [ ("e8", "Enum8('A'=1,'B'=2)", 2); ("fs", "FixedString(4)", 2) ] in
   let bs = build_uncompressed_block ~cols in
-  let pos = ref 0 in
-  let read_fn buf off len = let rem = Bytes.length bs - !pos in let n = min len rem in Bytes.blit bs !pos buf off n; pos := !pos + n; Lwt.return n in
-  let t = Connection.create ~compression:Compress.None () in
-  t.Connection.srv <- Some { Context.name=""; version_major=0; version_minor=0; version_patch=0; revision=Defines.dbms_min_revision_with_block_info; timezone=None; display_name="" };
-  match Lwt_main.run (Connection.receive_data t ~raw:true read_fn) with
+  match read_block_from_bytes bs with
   | { Block.n_rows=2; columns=[c1; c2]; _ } ->
       Alcotest.(check string) "fs type" "FixedString(4)" c2.Block.type_spec;
       ignore c1; ()
@@ -112,11 +104,7 @@ let test_lowcardinality_basic () =
   Buffer.add_string buf "\x03\x00\x00\x00\x00\x00\x00\x00";
   Buffer.add_char buf '\x01'; Buffer.add_char buf '\x02'; Buffer.add_char buf '\x01';
   let bs = Buffer.contents buf |> Bytes.of_string in
-  let pos = ref 0 in
-  let read_fn b o l = let rem = Bytes.length bs - !pos in let n = min l rem in Bytes.blit bs !pos b o n; pos := !pos + n; Lwt.return n in
-  let t = Connection.create ~compression:Compress.None () in
-  t.Connection.srv <- Some { Context.name=""; version_major=0; version_minor=0; version_patch=0; revision=Defines.dbms_min_revision_with_block_info; timezone=None; display_name="" };
-  match Lwt_main.run (Connection.receive_data t ~raw:true read_fn) with
+  match read_block_from_bytes bs with
   | { Block.n_rows=3; columns=[c]; _ } ->
       Alcotest.(check string) "lc name" "lc" c.Block.name;
       Alcotest.(check string) "lc type" "LowCardinality(String)" c.Block.type_spec
@@ -133,11 +121,7 @@ let test_lowcardinality_nullable () =
   Buffer.add_string buf "\x03\x00\x00\x00\x00\x00\x00\x00"; (* keys rows=3 *)
   Buffer.add_char buf '\x00'; Buffer.add_char buf '\x00'; Buffer.add_char buf '\x01';
   let bs = Buffer.contents buf |> Bytes.of_string in
-  let pos = ref 0 in
-  let read_fn b o l = let rem = Bytes.length bs - !pos in let n = min l rem in Bytes.blit bs !pos b o n; pos := !pos + n; Lwt.return n in
-  let t = Connection.create ~compression:Compress.None () in
-  t.Connection.srv <- Some { Context.name=""; version_major=0; version_minor=0; version_patch=0; revision=Defines.dbms_min_revision_with_block_info; timezone=None; display_name="" };
-  match Lwt_main.run (Connection.receive_data t ~raw:true read_fn) with
+  match read_block_from_bytes bs with
   | { Block.n_rows=3; columns=[c]; _ } ->
       Alcotest.(check string) "type" "LowCardinality(Nullable(String))" c.Block.type_spec
   | _ -> Alcotest.fail "Unexpected LC(N) block"
@@ -145,11 +129,7 @@ let test_lowcardinality_nullable () =
 let test_decimal_formatting () =
   let cols = [ ("d", "Decimal(10,2)", 1) ] in
   let bs = build_uncompressed_block ~cols in
-  let pos = ref 0 in
-  let read_fn buf off len = let rem = Bytes.length bs - !pos in let n = min len rem in Bytes.blit bs !pos buf off n; pos := !pos + n; Lwt.return n in
-  let t = Connection.create ~compression:Compress.None () in
-  t.Connection.srv <- Some { Context.name=""; version_major=0; version_minor=0; version_patch=0; revision=Defines.dbms_min_revision_with_block_info; timezone=None; display_name="" };
-  match Lwt_main.run (Connection.receive_data t ~raw:true read_fn) with
+  match read_block_from_bytes bs with
   | { Block.n_rows=1; columns=[c]; _ } ->
       Alcotest.(check string) "type" "Decimal(10,2)" c.Block.type_spec
   | _ -> Alcotest.fail "Unexpected Decimal block"
@@ -157,11 +137,7 @@ let test_decimal_formatting () =
 let test_ip_formatting () =
   let cols = [ ("v4","IPv4",1); ("v6","IPv6",1) ] in
   let bs = build_uncompressed_block ~cols in
-  let pos = ref 0 in
-  let read_fn buf off len = let rem = Bytes.length bs - !pos in let n = min len rem in Bytes.blit bs !pos buf off n; pos := !pos + n; Lwt.return n in
-  let t = Connection.create ~compression:Compress.None () in
-  t.Connection.srv <- Some { Context.name=""; version_major=0; version_minor=0; version_patch=0; revision=Defines.dbms_min_revision_with_block_info; timezone=None; display_name="" };
-  ignore (Lwt_main.run (Connection.receive_data t ~raw:true read_fn));
+  ignore (read_block_from_bytes bs);
   ()
 
 let test_pool_basics () =
@@ -591,25 +567,7 @@ let test_empty_map_formatting () =
 let test_enum8_parsing () =
   let cols = [ ("status", "Enum8('active'=1,'inactive'=2,'pending'=3)", 3) ] in
   let bs = build_uncompressed_block ~cols in
-  let pos = ref 0 in
-  let read_fn buf off len = 
-    let rem = Bytes.length bs - !pos in 
-    let n = min len rem in 
-    Bytes.blit bs !pos buf off n; 
-    pos := !pos + n; 
-    Lwt.return n 
-  in
-  let t = Connection.create ~compression:Compress.None () in
-  t.Connection.srv <- Some { 
-    Context.name=""; 
-    version_major=0; 
-    version_minor=0; 
-    version_patch=0; 
-    revision=Defines.dbms_min_revision_with_block_info; 
-    timezone=None; 
-    display_name="" 
-  };
-  match Lwt_main.run (Connection.receive_data t ~raw:true read_fn) with
+  match read_block_from_bytes bs with
   | { Block.n_rows=3; columns=[c]; _ } ->
       Alcotest.(check string) "Enum8 type" "Enum8('active'=1,'inactive'=2,'pending'=3)" c.Block.type_spec;
       (match c.Block.data with
@@ -620,25 +578,7 @@ let test_enum8_parsing () =
 let test_enum16_parsing () =
   let cols = [ ("priority", "Enum16('low'=100,'normal'=200,'high'=300)", 2) ] in
   let bs = build_uncompressed_block ~cols in
-  let pos = ref 0 in
-  let read_fn buf off len = 
-    let rem = Bytes.length bs - !pos in 
-    let n = min len rem in 
-    Bytes.blit bs !pos buf off n; 
-    pos := !pos + n; 
-    Lwt.return n 
-  in
-  let t = Connection.create ~compression:Compress.None () in
-  t.Connection.srv <- Some { 
-    Context.name=""; 
-    version_major=0; 
-    version_minor=0; 
-    version_patch=0; 
-    revision=Defines.dbms_min_revision_with_block_info; 
-    timezone=None; 
-    display_name="" 
-  };
-  match Lwt_main.run (Connection.receive_data t ~raw:true read_fn) with
+  match read_block_from_bytes bs with
   | { Block.n_rows=2; columns=[c]; _ } ->
       Alcotest.(check string) "Enum16 type" "Enum16('low'=100,'normal'=200,'high'=300)" c.Block.type_spec;
       (match c.Block.data with
@@ -657,25 +597,7 @@ let test_enum8_negative () =
   write_str buf "Enum8('off'=-1,'on'=1)";
   Buffer.add_char buf '\xFF'; (* -1 as signed byte *)
   let bs = Buffer.contents buf |> Bytes.of_string in
-  let pos = ref 0 in
-  let read_fn buf off len = 
-    let rem = Bytes.length bs - !pos in 
-    let n = min len rem in 
-    Bytes.blit bs !pos buf off n; 
-    pos := !pos + n; 
-    Lwt.return n 
-  in
-  let t = Connection.create ~compression:Compress.None () in
-  t.Connection.srv <- Some { 
-    Context.name=""; 
-    version_major=0; 
-    version_minor=0; 
-    version_patch=0; 
-    revision=Defines.dbms_min_revision_with_block_info; 
-    timezone=None; 
-    display_name="" 
-  };
-  match Lwt_main.run (Connection.receive_data t ~raw:true read_fn) with
+  match read_block_from_bytes bs with
   | { Block.n_rows=1; columns=[c]; _ } ->
       (match c.Block.data with
       | [| Columns.VEnum8 ("off", -1) |] -> ()
@@ -693,26 +615,8 @@ let test_enum_unknown_values () =
   (* Test how enum handles unknown values (should show numeric value) *)
   let cols = [ ("status", "Enum8('known'=1)", 1) ] in
   let bs = build_uncompressed_block ~cols in
-  let pos = ref 0 in
-  let read_fn buf off len = 
-    let rem = Bytes.length bs - !pos in 
-    let n = min len rem in 
-    Bytes.blit bs !pos buf off n; 
-    pos := !pos + n; 
-    Lwt.return n 
-  in
-  let t = Connection.create ~compression:Compress.None () in
-  t.Connection.srv <- Some { 
-    Context.name=""; 
-    version_major=0; 
-    version_minor=0; 
-    version_patch=0; 
-    revision=Defines.dbms_min_revision_with_block_info; 
-    timezone=None; 
-    display_name="" 
-  };
   (* The test data generator puts value 1 which should map to 'known' *)
-  match Lwt_main.run (Connection.receive_data t ~raw:true read_fn) with
+  match read_block_from_bytes bs with
   | { Block.n_rows=1; columns=[c]; _ } ->
       (match c.Block.data with
       | [| Columns.VEnum8 ("known", 1) |] -> ()
@@ -728,8 +632,8 @@ let test_async_inserter_creation () =
   let inserter = Async_insert.create config conn in
   
   Alcotest.(check string) "Table name" "test_table" config.table_name;
-  Alcotest.(check int) "Default batch size" 1000 config.max_batch_size;
-  Alcotest.(check int) "Default max bytes" 1_048_576 config.max_batch_bytes;
+  Alcotest.(check int) "Default batch size" 100_000 config.max_batch_size;
+  Alcotest.(check int) "Default max bytes" 16_777_216 config.max_batch_bytes;
   
   let (row_count, byte_size) = Lwt_main.run (Async_insert.get_stats inserter) in
   Alcotest.(check int) "Initial row count" 0 row_count;
@@ -781,9 +685,10 @@ let test_row_estimation () =
   
   let small_row = [Columns.VString "a"; Columns.VInt32 1l] in
   let large_row = [Columns.VString (String.make 100 'a'); Columns.VInt64 1L] in
+  let columns = [("name", "String"); ("value", "Int32")] in
   
   Lwt_main.run (
-    Async_insert.add_row inserter small_row >>= fun () ->
+    Async_insert.add_row ~columns inserter small_row >>= fun () ->
     Async_insert.get_stats inserter >>= fun (_, small_size) ->
     
     Async_insert.add_row inserter large_row >>= fun () ->
