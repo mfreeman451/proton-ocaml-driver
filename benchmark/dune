@@ -1,4 +1,5 @@
 (executable
  (public_name proton_benchmark)
  (name benchmark_main)
- (libraries proton lwt lwt.unix unix))
+ (libraries proton lwt lwt.unix unix)
+ (preprocess (pps lwt_ppx)))

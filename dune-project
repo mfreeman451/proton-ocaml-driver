@@ -18,6 +18,7 @@
   lz4
   zstd
   lwt
+  lwt_ppx
   tls
   tls-lwt
   ca-certs

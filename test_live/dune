@@ -1,7 +1,8 @@
 (executable
  (public_name proton_live_test)
  (name test_live)
- (libraries proton lwt lwt.unix))
+ (libraries proton lwt lwt.unix)
+ (preprocess (pps lwt_ppx)))
 
 (rule
  (alias livetest)

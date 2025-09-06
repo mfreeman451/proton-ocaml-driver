@@ -17,7 +17,6 @@ The Proton OCaml driver provides powerful async insert functionality for high-th
 
 ```ocaml
 open Proton
-open Lwt.Infix
 
 let client = Client.create ~host:"localhost" ~database:"mydb" () in
 

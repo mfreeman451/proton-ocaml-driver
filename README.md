@@ -23,7 +23,6 @@ opam install proton
 ### Basic Usage
 
 ```ocaml
-open Lwt.Infix
 open Proton
 
 (* Create a client *)
@@ -137,7 +136,8 @@ Async_insert.start inserter;
 let rec stream_events () =
   let event = generate_event () in
   let%lwt () = Async_insert.add_row inserter event in
-  Lwt_unix.sleep 0.1 >>= stream_events
+  let%lwt () = Lwt_unix.sleep 0.1 in
+  stream_events ()
 in
 Lwt.async stream_events;
 
@@ -199,9 +199,10 @@ let pool = Pool_lwt.create
   ~max_connections:20
   ~create:(fun () -> 
     Client.create ~host:"localhost" ~database:"default" ())
-  ~validate:(fun client -> 
-    Lwt.catch (fun () -> Client.execute client "SELECT 1" >|= fun _ -> true) 
-              (fun _ -> Lwt.return false))
+  ~validate:(fun client ->
+    Lwt.catch
+      (fun () -> let%lwt _ = Client.execute client "SELECT 1" in Lwt.return true)
+      (fun _ -> Lwt.return false))
   ()
 in
 

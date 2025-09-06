@@ -1,5 +1,5 @@
 (* file: async_insert.ml *)
-open Lwt.Infix
+open Lwt.Syntax
 open Columns
 
 (* Configuration for async insert behavior *)
@@ -111,17 +111,18 @@ let send_native_batch inserter (rows: value list list) (columns: (string * strin
             let insert_sql = Printf.sprintf "INSERT INTO %s (%s) FORMAT Native" inserter.config.table_name (String.concat ", " names) in
 
             (* 1. Send the INSERT query, but don't signal end of data. *)
-            Connection.send_query_without_data_end inserter.connection insert_sql >>= fun () ->
+            let* () = Connection.send_query_without_data_end inserter.connection insert_sql in
 
             (* 2. Wait for server-provided header block (schema). *)
             let rec await_header () =
-              Connection.receive_packet inserter.connection >>= function
+              let* pkt = Connection.receive_packet inserter.connection in
+              match pkt with
               | PData b when b.n_rows = 0 && b.columns <> [] -> Lwt.return_unit
               | PProgress | PProfileInfo | PTotals _ | PExtremes _ | PLog _ -> await_header ()
               | PData _ -> await_header ()
               | PEndOfStream -> Lwt.fail_with "Unexpected EndOfStream before data header"
             in
-            await_header () >>= fun () ->
+            let* () = await_header () in
 
             (* Transpose rows -> columns in O(n·m) *)
             let transpose_rows (rows : value list list) : value array array =
@@ -157,15 +158,16 @@ let send_native_batch inserter (rows: value list list) (columns: (string * strin
               let data_block = { Block.info = Block_info.{ is_overflows=false; bucket_num = -1 }; columns = block_columns; n_rows = n } in
               Connection.send_data_block inserter.connection data_block
             in
-            Lwt_list.iter_s send_one_chunk chunks >>= fun () ->
+            let* () = Lwt_list.iter_s send_one_chunk chunks in
 
             (* 4. Send an empty block to signify the end of the insert stream. *)
             let empty_block = { Block.info = Block_info.{ is_overflows=false; bucket_num = -1 }; columns = []; n_rows = 0 } in
-            Connection.send_data_block inserter.connection empty_block >>= fun () ->
+            let* () = Connection.send_data_block inserter.connection empty_block in
 
             (* 5. Wait for the server to acknowledge completion. *)
             let rec drain () =
-              Connection.receive_packet inserter.connection >>= function
+              let* pkt = Connection.receive_packet inserter.connection in
+              match pkt with
               | PEndOfStream -> Lwt.return_unit
               | _ -> drain ()
             in
@@ -175,8 +177,8 @@ let send_native_batch inserter (rows: value list list) (columns: (string * strin
             logf "Native insert attempt %d failed: %s\n%!" attempt (Printexc.to_string exn);
             let delay = inserter.config.retry_delay *. (2. ** float_of_int (attempt - 1)) in
             (* Reset connection before retry to clear any partial state *)
-            Connection.disconnect inserter.connection >>= fun () ->
-            Lwt_unix.sleep delay >>= fun () ->
+            let* () = Connection.disconnect inserter.connection in
+            let* () = Lwt_unix.sleep delay in
             retry_send (attempt + 1)
           )
     in
@@ -220,13 +222,15 @@ let rec flush_loop inserter =
   if not inserter.running then
     Lwt.return_unit
   else
-    Lwt_condition.wait inserter.flush_condition >>= fun () ->
+    let* () = Lwt_condition.wait inserter.flush_condition in
     if inserter.running then
-      Lwt.catch
-        (fun () -> flush_buffer inserter)
-        (fun exn -> 
-          logf "Flush error: %s\n%!" (Printexc.to_string exn);
-          Lwt.return_unit) >>= fun () ->
+      let* () =
+        Lwt.catch
+          (fun () -> flush_buffer inserter)
+          (fun exn ->
+            logf "Flush error: %s\n%!" (Printexc.to_string exn);
+            Lwt.return_unit)
+      in
       flush_loop inserter
     else
       Lwt.return_unit
@@ -236,13 +240,13 @@ let rec timer_flush_loop inserter =
   if not inserter.running then
     Lwt.return_unit
   else
-    Lwt_unix.sleep inserter.config.flush_interval >>= fun () ->
+    let* () = Lwt_unix.sleep inserter.config.flush_interval in
     if inserter.running then
-      Lwt_mutex.with_lock inserter.mutex (fun () ->
-        if should_flush inserter then
-          Lwt_condition.signal inserter.flush_condition ();
-        Lwt.return_unit
-      ) >>= fun () ->
+      let* () =
+        Lwt_mutex.with_lock inserter.mutex (fun () ->
+            if should_flush inserter then Lwt_condition.signal inserter.flush_condition ();
+            Lwt.return_unit)
+      in
       timer_flush_loop inserter
     else
       Lwt.return_unit
@@ -262,11 +266,14 @@ let stop inserter =
   if inserter.running then (
     inserter.running <- false;
     Lwt_condition.signal inserter.flush_condition ();
-    (match inserter.flush_promise with
-    | Some promise -> 
-      Lwt.cancel promise;
-      Lwt.catch (fun () -> promise) (fun _ -> Lwt.return_unit)
-    | None -> Lwt.return_unit) >>= fun () ->
+    let* () =
+      match inserter.flush_promise with
+      | Some promise ->
+          Lwt.cancel promise;
+          let* _ = Lwt.catch (fun () -> promise) (fun _ -> Lwt.return_unit) in
+          Lwt.return_unit
+      | None -> Lwt.return_unit
+    in
     flush_buffer inserter (* Final flush *)
   ) else
     Lwt.return_unit
@@ -274,22 +281,21 @@ let stop inserter =
 (* Add a row to the buffer *)
 let add_row ?(columns=[]) inserter (row: value list) =
   Lwt_mutex.with_lock inserter.mutex (fun () ->
-    (if inserter.buffer.column_names = None then (
-       if columns = [] then Lwt.fail_with "Columns must be provided with the first row"
-       else (
-         let (names, types) = List.split columns in
-         inserter.buffer.column_names <- Some names;
-         inserter.buffer.column_types <- Some types;
-         Lwt.return_unit
-       )
-     ) else Lwt.return_unit) >>= fun () ->
-    inserter.buffer.rows <- row :: inserter.buffer.rows;
-    inserter.buffer.row_count <- inserter.buffer.row_count + 1;
-    inserter.buffer.byte_size <- inserter.buffer.byte_size + estimate_row_size row;
-    if should_flush inserter then
-      Lwt_condition.signal inserter.flush_condition ();
-    Lwt.return_unit
-  )
+      let* () =
+        if inserter.buffer.column_names = None then (
+          if columns = [] then Lwt.fail_with "Columns must be provided with the first row"
+          else (
+            let (names, types) = List.split columns in
+            inserter.buffer.column_names <- Some names;
+            inserter.buffer.column_types <- Some types;
+            Lwt.return_unit))
+        else Lwt.return_unit
+      in
+      inserter.buffer.rows <- row :: inserter.buffer.rows;
+      inserter.buffer.row_count <- inserter.buffer.row_count + 1;
+      inserter.buffer.byte_size <- inserter.buffer.byte_size + estimate_row_size row;
+      if should_flush inserter then Lwt_condition.signal inserter.flush_condition ();
+      Lwt.return_unit)
 
 (* Add multiple rows *)
 let add_rows ?columns inserter rows =

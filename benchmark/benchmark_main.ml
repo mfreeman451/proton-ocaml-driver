@@ -308,10 +308,10 @@ let bench_live_streaming_read count =
         printf "  [READER] Got all %d rows!\n%!" count;
         Lwt.return acc_count
       end else
-        let open Lwt.Infix in
         Lwt.catch
           (fun () ->
-            Lwt_unix.with_timeout 2.0 (fun () -> Connection.receive_packet conn) >>= function
+            let* pkt = Lwt_unix.with_timeout 2.0 (fun () -> Connection.receive_packet conn) in
+            match pkt with
             | Connection.PData block ->
                 let rows = Block.get_rows block in
                 let row_count = List.length rows in

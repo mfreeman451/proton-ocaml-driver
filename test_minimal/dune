@@ -1,1 +1,2 @@
-(executable (name test_minimal) (libraries proton lwt))
+(executable (name test_minimal) (libraries proton lwt)
+ (preprocess (pps lwt_ppx)))

@@ -1,3 +1,4 @@
 (executable
  (name test_quick)
- (libraries proton lwt unix))
+ (libraries proton lwt unix)
+ (preprocess (pps lwt_ppx)))

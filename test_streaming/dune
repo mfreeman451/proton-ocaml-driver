@@ -1,5 +1,5 @@
 (executable
  (public_name test_streaming)
  (name test_streaming)
- (libraries proton lwt unix))
-
+ (libraries proton lwt unix)
+ (preprocess (pps lwt_ppx)))

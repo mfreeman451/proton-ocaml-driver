@@ -2,7 +2,7 @@ open Protocol
 open Errors
 open Context
 open Block
-open Lwt.Infix
+open Lwt.Syntax
 
 (* Small inlineable helper to avoid substring allocation in hot paths *)
 let[@inline] has_prefix (s:string) (p:string) : bool =
@@ -51,7 +51,7 @@ type t = {
 let rec write_all fd s off len =
   if len = 0 then Lwt.return_unit
   else
-    Lwt_unix.write_string fd s off len >>= fun n ->
+    let* n = Lwt_unix.write_string fd s off len in
     if n = 0 then Lwt.fail End_of_file
     else write_all fd s (off + n) (len - n)
 
@@ -113,23 +113,24 @@ let lwt_read_exact read_fn len =
   let rec loop off =
     if off = len then Lwt.return buf
     else
-      read_fn buf off (len - off) >>= fun n ->
+      let* n = read_fn buf off (len - off) in
       if n = 0 then Lwt.fail End_of_file else loop (off + n)
   in
   loop 0
 
 let read_byte read_fn =
-  lwt_read_exact read_fn 1 >|= fun b -> Char.code (Bytes.get b 0)
+  let+ b = lwt_read_exact read_fn 1 in
+  Char.code (Bytes.get b 0)
 
 let read_varint_int_lwt read_fn =
   let rec loop shift acc =
-    read_byte read_fn >>= fun b ->
+    let* b = read_byte read_fn in
     let v = acc lor ((b land 0x7f) lsl shift) in
     if (b land 0x80) <> 0 then loop (shift + 7) v else Lwt.return v
   in loop 0 0
 
 let read_int32_le_lwt read_fn =
-  lwt_read_exact read_fn 4 >|= fun buf ->
+  let+ buf = lwt_read_exact read_fn 4 in
   let a = Char.code (Bytes.get buf 0) in
   let b = Char.code (Bytes.get buf 1) in
   let c = Char.code (Bytes.get buf 2) in
@@ -143,7 +144,7 @@ let read_int32_le_lwt read_fn =
           (Int32.shift_left (Int32.of_int d) 24)))
 
 let read_uint64_le_lwt read_fn =
-  lwt_read_exact read_fn 8 >|= fun buf ->
+  let+ buf = lwt_read_exact read_fn 8 in
   let open Int64 in
   let b i = Int64.of_int (Char.code (Bytes.get buf i)) in
   logor (b 0)
@@ -156,12 +157,15 @@ let read_uint64_le_lwt read_fn =
                       (shift_left (b 7) 56)))))))
 
 let read_float64_le_lwt read_fn =
-  read_uint64_le_lwt read_fn >|= Int64.float_of_bits
+  let+ u = read_uint64_le_lwt read_fn in
+  Int64.float_of_bits u
 
 let read_str_lwt read_fn =
-  read_varint_int_lwt read_fn >>= fun len ->
+  let* len = read_varint_int_lwt read_fn in
   if len = 0 then Lwt.return ""
-  else lwt_read_exact read_fn len >|= Bytes.to_string
+  else
+    let+ b = lwt_read_exact read_fn len in
+    Bytes.to_string b
 
 let write_buf writev_fn (buf:Buffer.t) =
   let s = Buffer.contents buf in
@@ -183,18 +187,18 @@ let connect t =
     try Lwt.return (Unix.inet_addr_of_string host)
     with Invalid_argument _ | Failure _ ->
       (* It's not an IP address, try to resolve as hostname *)
-      Lwt_unix.gethostbyname host >>= fun host_entry ->
+      let* host_entry = Lwt_unix.gethostbyname host in
       if Array.length host_entry.Unix.h_addr_list > 0 then
         Lwt.return host_entry.Unix.h_addr_list.(0)
       else
         Lwt.fail (Failure ("Cannot resolve host: " ^ host))
   in
-  get_addr t.host >>= fun addr ->
+  let* addr = get_addr t.host in
   let sockaddr = Unix.ADDR_INET (addr, t.port) in
   debugv (fun () -> Printf.printf "[proton] connect: %s:%d (addr=%s)\n" t.host t.port (Unix.string_of_inet_addr addr));
-  Lwt_unix.with_timeout Defines.dbms_default_connect_timeout_sec (fun () -> Lwt_unix.connect fd sockaddr) >>= fun () ->
+  let* () = Lwt_unix.with_timeout Defines.dbms_default_connect_timeout_sec (fun () -> Lwt_unix.connect fd sockaddr) in
   debugv (fun () -> Printf.printf "[proton] connect: socket connected\n");
-  (if t.tls_config.enable_tls then
+  let* res = (if t.tls_config.enable_tls then
      let open Tls in
      let authenticator =
        if t.tls_config.insecure_skip_verify then (fun ?ip:_ ~host:_ _ -> Ok None)
@@ -215,15 +219,21 @@ let connect t =
      in
      let config = match Config.client ~authenticator ~certificates () with Ok c -> c | Error (`Msg m) -> failwith m in
      (match Domain_name.of_string t.host with
-      | Ok raw -> let h = Domain_name.host_exn raw in Tls_lwt.Unix.client_of_fd config ~host:h fd
-      | Error _ -> Tls_lwt.Unix.client_of_fd config fd) >|= fun tls -> `Tls (fd, tls)
-   else Lwt.return (`Fd fd)) >>= function
+      | Ok raw ->
+          let h = Domain_name.host_exn raw in
+          let+ tls = Tls_lwt.Unix.client_of_fd config ~host:h fd in
+          `Tls (fd, tls)
+      | Error _ ->
+          let+ tls = Tls_lwt.Unix.client_of_fd config fd in
+          `Tls (fd, tls))
+   else Lwt.return (`Fd fd)) in
+  match res with
   | `Tls (fd', tls) -> t.tls <- Some tls; t.fd <- Some fd'; t.connected <- true; debugv (fun () -> Printf.printf "[proton] TLS handshake complete\n"); Lwt.return_unit
   | `Fd fd' -> t.fd <- Some fd'; t.connected <- true; Lwt.return_unit
 
 let disconnect t =
-  (match t.tls with Some tls -> Tls_lwt.Unix.shutdown tls `read_write | None -> Lwt.return_unit) >>= fun () ->
-  (match t.fd with Some fd -> (Lwt.catch (fun () -> Lwt_unix.close fd) (fun _ -> Lwt.return_unit)) | None -> Lwt.return_unit) >>= fun () ->
+  let* () = (match t.tls with Some tls -> Tls_lwt.Unix.shutdown tls `read_write | None -> Lwt.return_unit) in
+  let* () = (match t.fd with Some fd -> (Lwt.catch (fun () -> Lwt_unix.close fd) (fun _ -> Lwt.return_unit)) | None -> Lwt.return_unit) in
   t.tls <- None; t.fd <- None; t.connected <- false; t.srv <- None; Lwt.return_unit
 
 let write_settings_as_strings buf settings ~settings_is_important =
@@ -258,25 +268,34 @@ let send_hello t =
 
 let receive_hello t =
   let read_fn = match t.tls, t.fd with
-    | Some tls, _ -> (fun b o l -> Tls_lwt.Unix.read tls ~off:o b >|= fun n -> if n > l then l else n)
+    | Some tls, _ -> (fun b o l -> let+ n = Tls_lwt.Unix.read tls ~off:o b in if n > l then l else n)
     | None, Some fd -> (fun b o l -> Lwt_unix.read fd b o l)
     | _ -> fun _ _ _ -> Lwt.fail (Failure "not connected")
   in
   debugv (fun () -> Printf.printf "[proton] receive_hello: waiting for server hello...\n");
-  Lwt_unix.with_timeout Defines.dbms_default_sync_request_timeout_sec (fun () -> read_varint_int_lwt read_fn) >>= fun p ->
+  let* p = Lwt_unix.with_timeout Defines.dbms_default_sync_request_timeout_sec (fun () -> read_varint_int_lwt read_fn) in
   debugv (fun () -> Printf.printf "[proton] receive_hello: server packet=%d\n" p);
   match Protocol.server_packet_of_int p with
   | SHello ->
-      read_str_lwt read_fn >>= fun server_name ->
-      read_varint_int_lwt read_fn >>= fun version_major ->
-      read_varint_int_lwt read_fn >>= fun version_minor ->
-      read_varint_int_lwt read_fn >>= fun server_revision ->
-      (if server_revision >= Defines.dbms_min_revision_with_server_timezone then
-         read_str_lwt read_fn >|= fun tz -> Some tz else Lwt.return_none) >>= fun server_timezone ->
-      (if server_revision >= Defines.dbms_min_revision_with_server_display_name then
-         read_str_lwt read_fn else Lwt.return "") >>= fun server_display_name ->
-      (if server_revision >= Defines.dbms_min_revision_with_version_patch then
-         read_varint_int_lwt read_fn else Lwt.return server_revision) >>= fun version_patch ->
+      let* server_name = read_str_lwt read_fn in
+      let* version_major = read_varint_int_lwt read_fn in
+      let* version_minor = read_varint_int_lwt read_fn in
+      let* server_revision = read_varint_int_lwt read_fn in
+      let* server_timezone =
+        if server_revision >= Defines.dbms_min_revision_with_server_timezone then
+          let+ tz = read_str_lwt read_fn in Some tz
+        else Lwt.return_none
+      in
+      let* server_display_name =
+        if server_revision >= Defines.dbms_min_revision_with_server_display_name then
+          read_str_lwt read_fn
+        else Lwt.return ""
+      in
+      let* version_patch =
+        if server_revision >= Defines.dbms_min_revision_with_version_patch then
+          read_varint_int_lwt read_fn
+        else Lwt.return server_revision
+      in
       let si = { Context.name = server_name; version_major; version_minor; version_patch;
                  revision = server_revision; timezone = (match server_timezone with Some tz -> Some tz | None -> None); display_name = server_display_name } in
       debugv (fun () -> Printf.printf "[proton] receive_hello: name='%s' ver=%d.%d.%d rev=%d tz=%s display='%s'\n"
@@ -287,14 +306,14 @@ let receive_hello t =
   | _other -> Lwt.fail (Unexpected_packet (Printf.sprintf "Expected HELLO, got %d" p))
 
 let force_connect t =
-  (if not t.connected then connect t else Lwt.return_unit) >>= fun () ->
+  let* () = (if not t.connected then connect t else Lwt.return_unit) in
   match t.srv with
   | Some _ -> Lwt.return_unit
-  | None -> send_hello t >>= fun () -> receive_hello t
+  | None -> let* () = send_hello t in receive_hello t
 
 (* Send a data block *)
 let send_data_block t (block: Block.t) =
-  force_connect t >>= fun () ->
+  let* () = force_connect t in
   let writev_fn = match t.tls, t.fd with
     | Some tls, _ -> (fun ss -> Tls_lwt.Unix.writev tls ss)
     | None, Some fd -> (fun ss -> writev_all fd ss)
@@ -331,7 +350,7 @@ let send_data_block t (block: Block.t) =
   let hdr = Buffer.create 32 in
   Binary_writer.write_varint_to_buffer hdr (Protocol.client_packet_to_int Protocol.Data);
   Binary_writer.write_string_to_buffer hdr "";
-  write_buf writev_fn hdr >>= fun () ->
+  let* () = write_buf writev_fn hdr in
   (* Send block payload (compressed if enabled) *)
   let payload = Buffer.contents buf_block in
   match t.compression with
@@ -342,7 +361,7 @@ let send_data_block t (block: Block.t) =
       writev_fn [s]
 
 let send_query t ?(query_id="") (query:string) =
-  force_connect t >>= fun () ->
+  let* () = force_connect t in
   let writev_fn = match t.tls, t.fd with
     | Some tls, _ -> (fun ss -> Tls_lwt.Unix.writev tls ss)
     | None, Some fd -> (fun ss -> writev_all fd ss)
@@ -383,7 +402,7 @@ let send_query t ?(query_id="") (query:string) =
   write_varint_int_to_buffer buf (qps_to_int Complete);
   write_varint_int_to_buffer buf (compression_to_int t.compression);
   write_varint_int_to_buffer buf (String.length query); Buffer.add_string buf query;
-  write_buf writev_fn buf >>= fun () ->
+  let* () = write_buf writev_fn buf in
   (* Per Proton/ClickHouse protocol, send an empty Data block to indicate no external tables / end of data. *)
   let empty_block = { Block.info = { Block_info.is_overflows=false; bucket_num = -1 }; columns = []; n_rows = 0 } in
   send_data_block t empty_block
@@ -392,7 +411,7 @@ let send_query t ?(query_id="") (query:string) =
    empty Data block here, because the client must immediately stream the
    data blocks (followed by a final empty block) after the Query. *)
 let send_query_without_data_end t ?(query_id="") (query:string) =
-  force_connect t >>= fun () ->
+  let* () = force_connect t in
   let writev_fn = match t.tls, t.fd with
     | Some tls, _ -> (fun ss -> Tls_lwt.Unix.writev tls ss)
     | None, Some fd -> (fun ss -> writev_all fd ss)
@@ -437,34 +456,41 @@ let send_query_without_data_end t ?(query_id="") (query:string) =
   (* For INSERT ... FORMAT Native, ClickHouse/Proton expects an explicit end
      of external tables: send a zero-column, zero-row Data block first. Then
      the client will send the header, data block(s), and a final terminator. *)
-  write_buf writev_fn buf >>= fun () ->
+  let* () = write_buf writev_fn buf in
   let empty_block = { Block.info = { Block_info.is_overflows=false; bucket_num = -1 }; columns = []; n_rows = 0 } in
   send_data_block t empty_block
 
 let read_progress t read_fn =
-  read_varint_int_lwt read_fn >>= fun _rows ->
-  read_varint_int_lwt read_fn >>= fun _bytes ->
+  let* _rows = read_varint_int_lwt read_fn in
+  let* _bytes = read_varint_int_lwt read_fn in
   let revision = match t.srv with Some s -> s.revision | None -> 0 in
-  (if revision >= Defines.dbms_min_revision_with_total_rows_in_progress then read_varint_int_lwt read_fn >|= ignore else Lwt.return_unit) >>= fun () ->
-  (if revision >= Defines.dbms_min_revision_with_client_write_info then read_varint_int_lwt read_fn >>= fun _ -> read_varint_int_lwt read_fn >|= ignore else Lwt.return_unit)
+  let* () =
+    if revision >= Defines.dbms_min_revision_with_total_rows_in_progress then
+      let+ _ = read_varint_int_lwt read_fn in ()
+    else Lwt.return_unit
+  in
+  if revision >= Defines.dbms_min_revision_with_client_write_info then (
+    let* _ = read_varint_int_lwt read_fn in
+    let+ _ = read_varint_int_lwt read_fn in ()
+  ) else Lwt.return_unit
 
 let read_profile_info _t read_fn =
-  read_varint_int_lwt read_fn >>= fun _ ->
-  read_varint_int_lwt read_fn >>= fun _ ->
-  read_varint_int_lwt read_fn >>= fun _ ->
-  read_byte read_fn >>= fun _ ->
-  read_varint_int_lwt read_fn >>= fun _ ->
-  read_byte read_fn >|= fun _ -> ()
+  let* _ = read_varint_int_lwt read_fn in
+  let* _ = read_varint_int_lwt read_fn in
+  let* _ = read_varint_int_lwt read_fn in
+  let* _ = read_byte read_fn in
+  let* _ = read_varint_int_lwt read_fn in
+  let+ _ = read_byte read_fn in ()
 
 let read_compressed_block_lwt read_fn : bytes Lwt.t =
   let open Compress in
   let header_len = header_size in
-  lwt_read_exact read_fn header_len >>= fun header ->
+  let* header = lwt_read_exact read_fn header_len in
   let method_byte = Char.code (Bytes.get header checksum_size) in
   let compressed_size = Binary.bytes_get_int32_le header (checksum_size + 1) |> Int32.to_int in
   let uncompressed_size = Binary.bytes_get_int32_le header (checksum_size + 5) |> Int32.to_int in
   let payload_size = compressed_size - compress_header_size in
-  lwt_read_exact read_fn payload_size >>= fun payload ->
+  let* payload = lwt_read_exact read_fn payload_size in
   let checksum_input = Bytes.create (compress_header_size + payload_size) in
   Bytes.blit header checksum_size checksum_input 0 compress_header_size;
   Bytes.blit payload 0 checksum_input compress_header_size payload_size;
@@ -485,7 +511,7 @@ let read_uncompressed_block_lwt read_fn : bytes Lwt.t =
     let raw = Bytes.create 10 in
     let rec loop shift acc idx =
       let b = Bytes.create 1 in
-      read_fn b 0 1 >>= fun n ->
+      let* n = read_fn b 0 1 in
       if n = 0 then Lwt.fail End_of_file else
       let vb = Bytes.get b 0 in
       Bytes.set raw idx vb;
@@ -500,29 +526,29 @@ let read_uncompressed_block_lwt read_fn : bytes Lwt.t =
     loop 0 0 0
   in
   let read_and_copy_bytes len =
-    lwt_read_exact read_fn len >|= fun b -> Buffer.add_bytes buf b; b
+    let+ b = lwt_read_exact read_fn len in Buffer.add_bytes buf b; b
   in
   let read_and_copy_str () =
-    read_varint_raw_to_buf () >>= fun len ->
+    let* len = read_varint_raw_to_buf () in
     if len = 0 then Lwt.return ""
-    else read_and_copy_bytes len >|= Bytes.to_string
+    else let+ s = read_and_copy_bytes len in Bytes.to_string s
   in
   (* BlockInfo *)
   let rec copy_block_info () =
-    read_varint_raw_to_buf () >>= fun field ->
+    let* field = read_varint_raw_to_buf () in
     if field = 0 then Lwt.return_unit
-    else if field = 1 then read_and_copy_bytes 1 >>= fun _ -> copy_block_info ()
-    else if field = 2 then read_and_copy_bytes 4 >>= fun _ -> copy_block_info ()
+    else if field = 1 then let* _ = read_and_copy_bytes 1 in copy_block_info ()
+    else if field = 2 then let* _ = read_and_copy_bytes 4 in copy_block_info ()
     else copy_block_info ()
   in
-  copy_block_info () >>= fun () ->
+  let* () = copy_block_info () in
   (* n_columns, n_rows *)
-  read_varint_raw_to_buf () >>= fun n_columns ->
-  read_varint_raw_to_buf () >>= fun n_rows ->
+  let* n_columns = read_varint_raw_to_buf () in
+  let* n_rows = read_varint_raw_to_buf () in
   let rec copy_columns i =
     if i = n_columns then Lwt.return_unit else
-    read_and_copy_str () >>= fun _col_name ->
-    read_and_copy_str () >>= fun col_type ->
+    let* _col_name = read_and_copy_str () in
+    let* col_type = read_and_copy_str () in
     let t = String.lowercase_ascii (String.trim col_type) in
     let fixed_bytes_per_row =
       if t = "uint8" || t = "int8" || has_prefix t "enum8(" then Some 1 else
@@ -531,26 +557,28 @@ let read_uncompressed_block_lwt read_fn : bytes Lwt.t =
       if t = "uint64" || t = "int64" || t = "float64" || has_prefix t "datetime64" then Some 8 else
       None
     in
-    (match fixed_bytes_per_row with
-     | Some sz -> read_and_copy_bytes (sz * n_rows) >|= fun _ -> ()
-     | None ->
-         if t = "string" || t = "json" then (
-           let rec loop r =
-             if r = n_rows then Lwt.return_unit
-             else read_and_copy_str () >>= fun _ -> loop (r+1)
-           in loop 0
-         ) else (
-           Lwt.fail (Failure (Printf.sprintf "unsupported uncompressed column type: %s" col_type))
-         )) >>= fun () ->
+    let* () =
+      match fixed_bytes_per_row with
+      | Some sz -> let+ _ = read_and_copy_bytes (sz * n_rows) in ()
+      | None ->
+          if t = "string" || t = "json" then (
+            let rec loop r =
+              if r = n_rows then Lwt.return_unit
+              else let* _ = read_and_copy_str () in loop (r+1)
+            in loop 0
+          ) else (
+            Lwt.fail (Failure (Printf.sprintf "unsupported uncompressed column type: %s" col_type))
+          )
+    in
     copy_columns (i+1)
   in
-  copy_columns 0 >>= fun () ->
+  let* () = copy_columns 0 in
   Lwt.return (Buffer.to_bytes buf)
 
 let rec read_all_remaining read_fn acc =
   (* Helper to read all remaining data from stream into accumulator *)
   let chunk = Bytes.create 8192 in
-  read_fn chunk 0 8192 >>= fun n ->
+  let* n = read_fn chunk 0 8192 in
   if n = 0 then 
     Lwt.return acc
   else (
@@ -561,53 +589,55 @@ let rec read_all_remaining read_fn acc =
 let receive_data_block t ~compressible read_fn : Block.t Lwt.t =
   let revision = match t.srv with Some s -> s.revision | None -> 0 in
   (* Server sends table name string before block. Discard it. *)
-  read_str_lwt read_fn >>= fun _table_name ->
+  let* _table_name = read_str_lwt read_fn in
   if compressible && t.compression <> Compress.None then (
-    read_compressed_block_lwt read_fn >>= fun decompressed ->
+    let* decompressed = read_compressed_block_lwt read_fn in
     let br = Buffered_reader.create_from_bytes_no_copy decompressed in
     Lwt.return (Block.read_block_br ~revision br)
   ) else (
-    read_uncompressed_block_lwt read_fn >>= fun bytes ->
+    let* bytes = read_uncompressed_block_lwt read_fn in
     let br = Buffered_reader.create_from_bytes_no_copy bytes in
     Lwt.return (Block.read_block_br ~revision br)
   )
 
 let receive_packet t : packet Lwt.t =
   let read_fn = match t.tls, t.fd with
-    | Some tls, _ -> (fun b o l -> Tls_lwt.Unix.read tls ~off:o b >|= fun n -> if n > l then l else n)
+    | Some tls, _ -> (fun b o l -> let+ n = Tls_lwt.Unix.read tls ~off:o b in if n > l then l else n)
     | None, Some fd -> (fun b o l -> Lwt_unix.read fd b o l)
     | _ -> fun _ _ _ -> Lwt.fail (Failure "not connected")
   in
-  read_varint_int_lwt read_fn >>= fun ptype ->
+  let* ptype = read_varint_int_lwt read_fn in
   match Protocol.server_packet_of_int ptype with
-  | SData -> receive_data_block t ~compressible:true read_fn >|= fun b -> PData b
+  | SData -> let+ b = receive_data_block t ~compressible:true read_fn in PData b
   | SException ->
       let rec read_exception_lwt () =
-        read_int32_le_lwt read_fn >>= fun code32 ->
+        let* code32 = read_int32_le_lwt read_fn in
         let code = Int32.to_int code32 in
-        read_str_lwt read_fn >>= fun name ->
-        read_str_lwt read_fn >>= fun msg ->
-        read_str_lwt read_fn >>= fun stack ->
-        read_byte read_fn >>= fun has_nested ->
+        let* name = read_str_lwt read_fn in
+        let* msg = read_str_lwt read_fn in
+        let* stack = read_str_lwt read_fn in
+        let* has_nested = read_byte read_fn in
         let base = (if name <> "DB::Exception" then name ^ ". " else "") ^ msg ^ ". Stack trace:\n\n" ^ stack in
-        (if has_nested <> 0 then
-           read_exception_lwt () >|= fun nested_exn ->
-             match nested_exn with
-             | Errors.Server_exception se -> Some se.message
-             | e -> Some (Printexc.to_string e)
-         else Lwt.return_none) >>= fun nested ->
+        let* nested =
+          if has_nested <> 0 then
+            let+ nested_exn = read_exception_lwt () in
+              match nested_exn with
+              | Errors.Server_exception se -> Some se.message
+              | e -> Some (Printexc.to_string e)
+          else Lwt.return_none
+        in
         Lwt.return (Errors.Server_exception { code; message = base; nested })
       in
-      read_exception_lwt () >>= fun e -> Lwt.fail e
-  | SProgress -> read_progress t read_fn >|= fun () -> PProgress
+      let* e = read_exception_lwt () in Lwt.fail e
+  | SProgress -> let+ () = read_progress t read_fn in PProgress
   | SEndOfStream -> Lwt.return PEndOfStream
-  | SProfileInfo -> read_profile_info t read_fn >|= fun () -> PProfileInfo
-  | STotals -> receive_data_block t ~compressible:true read_fn >|= fun b -> PTotals b
-  | SExtremes -> receive_data_block t ~compressible:true read_fn >|= fun b -> PExtremes b
-  | SLog -> receive_data_block t ~compressible:false read_fn >|= fun b -> PLog b
-  | STableColumns -> read_str_lwt read_fn >>= fun _ -> read_str_lwt read_fn >|= fun _ -> PProgress
-  | SPartUUIDs | SReadTaskRequest -> receive_data_block t ~compressible:true read_fn >|= fun _ -> PProgress
-  | SProfileEvents -> receive_data_block t ~compressible:false read_fn >|= fun _ -> PProgress
+  | SProfileInfo -> let+ () = read_profile_info t read_fn in PProfileInfo
+  | STotals -> let+ b = receive_data_block t ~compressible:true read_fn in PTotals b
+  | SExtremes -> let+ b = receive_data_block t ~compressible:true read_fn in PExtremes b
+  | SLog -> let+ b = receive_data_block t ~compressible:false read_fn in PLog b
+  | STableColumns -> let* _ = read_str_lwt read_fn in let+ _ = read_str_lwt read_fn in PProgress
+  | SPartUUIDs | SReadTaskRequest -> let+ _ = receive_data_block t ~compressible:true read_fn in PProgress
+  | SProfileEvents -> let+ _ = receive_data_block t ~compressible:false read_fn in PProgress
   | SHello | SPong | STablesStatusResponse -> Lwt.return PProgress
 
 let read_exception_from_bytes (bs:bytes) : exn Lwt.t =
@@ -618,19 +648,21 @@ let read_exception_from_bytes (bs:bytes) : exn Lwt.t =
     Bytes.blit bs !pos buf off to_copy; pos := !pos + to_copy; Lwt.return to_copy
   in
   let rec read_exception_lwt () =
-    read_int32_le_lwt read_fn >>= fun code32 ->
+    let* code32 = read_int32_le_lwt read_fn in
     let code = Int32.to_int code32 in
-    read_str_lwt read_fn >>= fun name ->
-    read_str_lwt read_fn >>= fun msg ->
-    read_str_lwt read_fn >>= fun stack ->
-    read_byte read_fn >>= fun has_nested ->
+    let* name = read_str_lwt read_fn in
+    let* msg = read_str_lwt read_fn in
+    let* stack = read_str_lwt read_fn in
+    let* has_nested = read_byte read_fn in
     let base = (if name <> "DB::Exception" then name ^ ". " else "") ^ msg ^ ". Stack trace:\n\n" ^ stack in
-    (if has_nested <> 0 then
-       read_exception_lwt () >|= fun nested_exn ->
-         match nested_exn with
-         | Errors.Server_exception se -> Some se.message
-         | e -> Some (Printexc.to_string e)
-     else Lwt.return_none) >>= fun nested ->
+    let* nested =
+      if has_nested <> 0 then
+        let+ nested_exn = read_exception_lwt () in
+          match nested_exn with
+          | Errors.Server_exception se -> Some se.message
+          | e -> Some (Printexc.to_string e)
+      else Lwt.return_none
+    in
     Lwt.return (Errors.Server_exception { code; message = base; nested })
   in
   read_exception_lwt ()

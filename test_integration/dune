@@ -1,4 +1,5 @@
 (executable
  (public_name test_integration)
  (name test_integration)
- (libraries proton lwt unix))
+ (libraries proton lwt unix)
+ (preprocess (pps lwt_ppx)))
