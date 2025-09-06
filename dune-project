@@ -27,8 +27,3 @@
   mirage-crypto
   (alcotest :with-test)
   (odoc :with-doc)))
-
-(env
- (release
-  (ocamlopt_flags (:standard -O3))
-  (flags (:standard -O3))))
