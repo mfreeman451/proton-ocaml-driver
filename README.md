@@ -161,7 +161,7 @@ let sample_row = [
   VDateTime (Int64.of_float (Unix.gettimeofday ()), Some "UTC");
   VDateTime64 (Int64.of_float (Unix.gettimeofday () *. 1000.), 3, Some "UTC");
   VEnum8 ("status", 1);
-  VArray [VInt32 1l; VInt32 2l; VInt32 3l];
+  VArray [| VInt32 1l; VInt32 2l; VInt32 3l |];
   VMap [(VString "key1", VString "value1"); (VString "key2", VString "value2")];
 ]
 ```

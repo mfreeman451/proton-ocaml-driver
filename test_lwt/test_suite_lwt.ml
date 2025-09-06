@@ -518,17 +518,17 @@ let test_nested_array_parsing () =
   | _ -> Alcotest.(check bool) "Nested array parser created" true false
 
 let test_array_value_formatting () =
-  let array_value = Columns.VArray [
+  let array_value = Columns.VArray [|
     Columns.VString "hello";
     Columns.VString "world";
     Columns.VInt32 42l
-  ] in
+  |] in
   let array_str = Columns.value_to_string array_value in
   let expected = "[hello,world,42]" in
   Alcotest.(check string) "Array formatting" expected array_str
 
 let test_empty_array_formatting () =
-  let empty_array = Columns.VArray [] in
+  let empty_array = Columns.VArray [||] in
   let array_str = Columns.value_to_string empty_array in
   let expected = "[]" in
   Alcotest.(check string) "Empty array formatting" expected array_str
