@@ -66,16 +66,16 @@ Async_insert.start inserter;
 (* Add rows continuously *)
 let rec add_events () =
   let event = generate_event_data () in
-  Async_insert.add_row inserter event >>= fun () ->
+  let%lwt () = Async_insert.add_row inserter event in
   (* Your application logic continues immediately *)
-  Lwt_unix.sleep 0.1 >>= fun () ->
+  let%lwt () = Lwt_unix.sleep 0.1 in
   add_events ()
 in
 
 Lwt.async add_events;
 
 (* Later, when shutting down *)
-Async_insert.stop inserter >>= fun () ->
+let%lwt () = Async_insert.stop inserter in
 Client.disconnect client
 ```
 
@@ -148,7 +148,7 @@ The async inserter is thread-safe and uses Lwt mutexes internally. Multiple thre
 
 ```ocaml
 (* High-throughput event ingestion system *)
-open Lwt.Infix
+open Lwt.Syntax
 
 let setup_event_pipeline () =
   let client = Client.create ~host:"proton-cluster" ~database:"analytics" () in
@@ -179,8 +179,8 @@ let setup_event_pipeline () =
   Lwt_unix.on_signal Sys.sigterm (fun _ ->
     Printf.printf "Shutting down event pipeline...\n";
     Lwt.async (fun () ->
-      Async_insert.stop inserter >>= fun () ->
-      Client.disconnect client >>= fun () ->
+      let* () = Async_insert.stop inserter in
+      let* () = Client.disconnect client in
       Lwt_io.println "Pipeline shutdown complete"
     )
   );
