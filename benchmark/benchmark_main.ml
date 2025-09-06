@@ -284,6 +284,9 @@ let test_million_rows () =
   printf "1M Async Insert Results:\n%!";
   printf "  Rate: %.0f rows/second\n%!" insert_rate;
   printf "  Time: %.2f minutes\n%!" (1_000_000.0 /. insert_rate /. 60.0);
+  (* Show cache stats for column readers to validate cache behavior *)
+  let stats = Columns.get_cache_stats () in
+  printf "  Column Reader Cache: %s\n%!" (Columns.cache_stats_to_string stats);
   
   Lwt.return_unit
 
