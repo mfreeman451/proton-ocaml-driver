@@ -27,7 +27,7 @@ let generate_batch_data count =
 (* Benchmark: Async batch insert *)
 let bench_async_batch_insert count =
   let open Lwt.Syntax in
-  let client = Client.create ~host ~port () in
+  let client = Client.create ~host ~port ~compression:Compress.None () in
   let table_name = sprintf "bench_async_%d" (Random.int 100000) in
   
   printf "Setting up table for %d async batch inserts...\n%!" count;
@@ -55,6 +55,22 @@ let bench_async_batch_insert count =
     Client.insert_rows ~columns client table_name rows
   ) in
   
+  (* Verify rows actually inserted *)
+  let verify_sql = sprintf "SELECT to_uint64(count()) FROM %s SETTINGS query_mode='table'" table_name in
+  let* verify_res = Client.execute client verify_sql in
+  let verified = match verify_res with
+    | Client.Rows (rows, _) -> (match rows with
+        | [ [ Columns.VUInt64 n ] ] -> Int64.to_int n
+        | [ [ Columns.VInt64 n ] ] -> Int64.to_int n
+        | [ [ Columns.VInt32 n ] ] -> Int32.to_int n
+        | _ -> -1)
+    | _ -> -1
+  in
+  if verified <> count then
+    printf "⚠️  Verification mismatch: expected %d, got %d\n%!" count verified
+  else
+    printf "✅ Verified %d rows inserted\n%!" verified;
+
   let rate = float_of_int count /. elapsed in
   printf "✅ %d rows inserted at %.0f rows/second (ASYNC BATCH)\n\n%!" count rate;
   
@@ -64,11 +80,11 @@ let bench_async_batch_insert count =
 (* Benchmark: Manual async insert with custom config *)
 let bench_manual_async_insert count batch_size =
   let open Lwt.Syntax in
-  let conn = Connection.create ~host ~port () in
+  let conn = Connection.create ~host ~port ~compression:Compress.None () in
   let table_name = sprintf "bench_manual_%d" (Random.int 100000) in
   
   printf "Setting up table for %d manual async inserts (batch size: %d)...\n%!" count batch_size;
-  let client = Client.create ~host ~port () in
+  let client = Client.create ~host ~port ~compression:Compress.None () in
   let* () = 
     let drop_sql = sprintf "DROP STREAM IF EXISTS %s" table_name in
     let create_sql = sprintf {|
@@ -101,6 +117,23 @@ let bench_manual_async_insert count batch_size =
     Async_insert.stop inserter
   ) in
   
+  (* Verify rows actually inserted *)
+  let verify_sql = sprintf "SELECT to_uint64(count()) FROM %s SETTINGS query_mode='table'" table_name in
+  let* client2 = Lwt.return (Client.create ~host ~port () ) in
+  let* verify_res = Client.execute client2 verify_sql in
+  let verified = match verify_res with
+    | Client.Rows (rows, _) -> (match rows with
+        | [ [ Columns.VUInt64 n ] ] -> Int64.to_int n
+        | [ [ Columns.VInt64 n ] ] -> Int64.to_int n
+        | [ [ Columns.VInt32 n ] ] -> Int32.to_int n
+        | _ -> -1)
+    | _ -> -1
+  in
+  if verified <> count then
+    printf "⚠️  Verification mismatch: expected %d, got %d\n%!" count verified
+  else
+    printf "✅ Verified %d rows inserted\n%!" verified;
+
   let rate = float_of_int count /. elapsed in
   printf "✅ %d rows inserted at %.0f rows/second (MANUAL ASYNC, batch=%d)\n\n%!" count rate batch_size;
   

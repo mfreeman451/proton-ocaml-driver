@@ -407,7 +407,10 @@ let send_query_without_data_end t ?(query_id="") (query:string) =
   write_varint_int_to_buffer buf (qps_to_int Complete);
   write_varint_int_to_buffer buf (compression_to_int t.compression);
   write_varint_int_to_buffer buf (String.length query); Buffer.add_string buf query;
-  write_buf writev_fn buf
+  write_buf writev_fn buf >>= fun () ->
+  (* Per protocol, immediately send empty external-tables Data block. *)
+  let empty_block = { Block.info = { Block_info.is_overflows=false; bucket_num = -1 }; columns = []; n_rows = 0 } in
+  send_data_block t empty_block
 
 let read_progress t read_fn =
   read_varint_int_lwt read_fn >>= fun _rows ->
