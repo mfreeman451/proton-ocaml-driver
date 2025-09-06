@@ -25,10 +25,9 @@ let () =
     | Some (Client.Rows (rows, _)) -> 
         Printf.printf "   ✅ Query successful! Got %d rows\n" (List.length rows);
         List.iter (fun row ->
-          let values = List.map Columns.value_to_string row in
+          let values = List.map Column.value_to_string row in
           Printf.printf "      Row: [%s]\n" (String.concat ", " values)
         ) rows
         
   with
   | e -> Printf.printf "❌ Failed: %s\n" (Printexc.to_string e)
-

@@ -99,20 +99,20 @@ let bench_reader_for_spec ~spec ~rows ~loops make_bytes =
   let (_, cold_s) = time (fun () ->
     for _i = 1 to loops do
       let br = Buffered_reader.create_from_bytes_no_copy payload in
-      let reader = Columns.compile_reader_br spec in
+      let reader = Column.compile_reader_br spec in
       ignore (reader br rows)
     done) in
   (* Cached: compile once, then reuse *)
-  Columns.reset_cache_stats (); Columns.clear_reader_caches ();
+  Column.reset_cache_stats (); Column.clear_reader_caches ();
   let (_, warm_s) = time (fun () ->
-    let reader = Columns.reader_of_spec_br spec in
+    let reader = Column.reader_of_spec_br spec in
     for _i = 1 to loops do
       let br = Buffered_reader.create_from_bytes_no_copy payload in
       ignore (reader br rows)
     done) in
-  let stats = Columns.get_cache_stats () in
+  let stats = Column.get_cache_stats () in
   printf "  %-28s | rows=%5d loops=%4d | cold=%.4fs warm=%.4fs | %s\n%!"
-    spec rows loops cold_s warm_s (Columns.cache_stats_to_string stats)
+    spec rows loops cold_s warm_s (Column.cache_stats_to_string stats)
 
 let run_reader_micro_benchmarks () =
   printf "\n=== READER MICRO-BENCHMARKS (cache effectiveness) ===\n%!";
@@ -142,7 +142,7 @@ let generate_batch_data count =
     let id = Int32.of_int (i + 1) in
     let name = sprintf "User%d" (i + 1) in
     let value = Random.float 10000.0 in
-    [Columns.VInt32 id; Columns.VString name; Columns.VFloat64 value]
+    [Column.Int32 id; Column.String name; Column.Float64 value]
   ) in
   Array.to_list rows
 
@@ -157,9 +157,9 @@ let verify_count client table_name ~expected =
     in
     let count = match res with
       | Client.Rows (rows, _) -> (match rows with
-          | [ [ Columns.VUInt64 n ] ] -> Int64.to_int n
-          | [ [ Columns.VInt64 n ] ] -> Int64.to_int n
-          | [ [ Columns.VInt32 n ] ] -> Int32.to_int n
+          | [ [ Column.UInt64 n ] ] -> Int64.to_int n
+          | [ [ Column.Int64 n ] ] -> Int64.to_int n
+          | [ [ Column.Int32 n ] ] -> Int32.to_int n
           | _ -> -1)
       | _ -> -1
     in

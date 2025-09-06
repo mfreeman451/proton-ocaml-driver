@@ -11,7 +11,7 @@ let () =
       let cols = String.concat ", " (List.map fst columns) in
       let* () = Lwt_io.printf "Columns: %s\n" cols in
       let* () = Lwt_list.iter_s (fun row ->
-        let cells = row |> List.map Columns.value_to_string |> String.concat " | " in
+        let cells = row |> List.map Column.value_to_string |> String.concat " | " in
         Lwt_io.printf "Row: %s\n" cells
       ) rows in
       Client.disconnect client

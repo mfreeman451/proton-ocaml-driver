@@ -34,7 +34,7 @@ match result with
 | Client.NoRows -> Lwt_io.println "No results found"
 | Client.Rows (rows, columns) -> 
     List.iter (fun row ->
-      let values = List.map Columns.value_to_string row in
+      let values = List.map Column.value_to_string row in
       Printf.printf "%s\n" (String.concat ", " values)
     ) rows;
     Lwt.return_unit
@@ -52,7 +52,7 @@ let%lwt total_sales = Client.query_fold client
   "SELECT amount FROM sales WHERE date >= '2024-01-01'"
   ~init:0.0
   ~f:(fun acc row -> match row with
-    | [Columns.VFloat64 amount] -> Lwt.return (acc +. amount)  
+    | [Column.Float64 amount] -> Lwt.return (acc +. amount)  
     | _ -> Lwt.return acc)
 in
 Printf.printf "Total sales: $%.2f\n" total_sales
@@ -65,7 +65,7 @@ Printf.printf "Total sales: $%.2f\n" total_sales
 let%lwt () = Client.query_iter client
   "SELECT name, email FROM users WHERE active = 1"
   ~f:(fun row -> match row with
-    | [Columns.VString name; Columns.VString email] ->
+    | [Column.String name; Column.String email] ->
         send_email ~to:email ~subject:("Hi " ^ name) ~body:"..."
     | _ -> Lwt.return_unit)
 ```
@@ -107,9 +107,9 @@ Insert data efficiently with automatic batching, compression, and retry logic:
 ```ocaml
 (* Insert multiple rows efficiently *)
 let rows = [
-  [Columns.VString "user123"; Columns.VInt32 25l; Columns.VFloat64 99.99];
-  [Columns.VString "user456"; Columns.VInt32 30l; Columns.VFloat64 149.50];
-  [Columns.VString "user789"; Columns.VInt32 22l; Columns.VFloat64 75.25];
+  [Column.String "user123"; Column.Int32 25l; Column.Float64 99.99];
+  [Column.String "user456"; Column.Int32 30l; Column.Float64 149.50];
+  [Column.String "user789"; Column.Int32 22l; Column.Float64 75.25];
 ] in
 
 let%lwt () = Client.insert_rows client "orders"
@@ -151,18 +151,18 @@ Client.disconnect client
 Full support for ClickHouse data types with OCaml-native representations:
 
 ```ocaml
-open Columns
+open Column
 
 let sample_row = [
-  VString "Hello World";
-  VInt32 42l;
-  VInt64 1234567890L;
-  VFloat64 3.14159;
-  VDateTime (Int64.of_float (Unix.gettimeofday ()), Some "UTC");
-  VDateTime64 (Int64.of_float (Unix.gettimeofday () *. 1000.), 3, Some "UTC");
-  VEnum8 ("status", 1);
-  VArray [| VInt32 1l; VInt32 2l; VInt32 3l |];
-  VMap [(VString "key1", VString "value1"); (VString "key2", VString "value2")];
+  String "Hello World";
+  Int32 42l;
+  Int64 1234567890L;
+  Float64 3.14159;
+  DateTime (Int64.of_float (Unix.gettimeofday ()), Some "UTC");
+  DateTime64 (Int64.of_float (Unix.gettimeofday () *. 1000.), 3, Some "UTC");
+  Enum8 ("status", 1);
+  Array [| Int32 1l; Int32 2l; Int32 3l |];
+  Map [(String "key1", String "value1"); (String "key2", String "value2")];
 ]
 ```
 
@@ -221,7 +221,7 @@ let process_clickstream () =
   let%lwt () = Client.query_iter client
     "SELECT user_id, page, timestamp FROM clicks WHERE date = today()"
     ~f:(fun row -> match row with
-      | [VString user_id; VString page; VDateTime (ts, _)] ->
+      | [String user_id; String page; DateTime (ts, _)] ->
           update_user_session user_id page ts
       | _ -> Lwt.return_unit)
   in
@@ -236,7 +236,7 @@ let calculate_metrics () =
      GROUP BY country"
     ~init:[]
     ~f:(fun acc row _columns -> match row with
-      | [VString country; VInt64 visits; VFloat64 duration] ->
+      | [String country; Int64 visits; Float64 duration] ->
           let metric = { country; visits = Int64.to_int visits; avg_duration = duration } in
           Lwt.return (metric :: acc)
       | _ -> Lwt.return acc)

@@ -48,7 +48,7 @@ let run () =
       | Connection.PData b ->
           let rows = Block.get_rows b in
           List.iter (fun row -> if !printed < 3 then (
-            let s = String.concat ", " (List.map Columns.value_to_string row) in
+            let s = String.concat ", " (List.map Column.value_to_string row) in
             printf "[insert_verify] stream row: %s\n%!" s; incr printed)) rows;
           loop ()
       | Connection.PEndOfStream -> Lwt.return_unit

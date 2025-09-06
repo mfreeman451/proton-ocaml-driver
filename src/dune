@@ -3,7 +3,7 @@
  (public_name proton)
  (libraries unix lz4 zstd tls-lwt x509 ca-certs lwt.unix domain-name mirage-crypto)
  (preprocess (pps lwt_ppx))
- (modules defines protocol varint binary binary_writer errors read_helpers context buffered_reader block_info columns_types columns_primitives columns_datetime columns_complex columns_lowcardinality columns block connection client cityhash compress pool_lwt async_insert proton)
+ (modules defines protocol varint binary binary_writer errors read_helpers context buffered_reader block_info columns_types columns_primitives columns_datetime columns_complex columns_lowcardinality column columns block connection client cityhash compress pool_lwt async_insert proton)
  (foreign_stubs
   (language cxx)
   (names cityhash_stubs)

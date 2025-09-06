@@ -39,40 +39,40 @@ let write_block_info_to_buffer buf (bi : Block_info.t) =
 (* Serialize a column value based on its type *)
 let rec write_value_to_buffer buf value =
   match value with
-  | Columns.VString s -> write_string_to_buffer buf s
-  | Columns.VInt32 n -> write_int32_le_to_buffer buf n
-  | Columns.VInt64 n -> 
+  | Column.String s -> write_string_to_buffer buf s
+  | Column.Int32 n -> write_int32_le_to_buffer buf n
+  | Column.Int64 n -> 
       write_int32_le_to_buffer buf (Int64.to_int32 (Int64.logand n 0xFFFFFFFFL));
       write_int32_le_to_buffer buf (Int64.to_int32 (Int64.shift_right_logical n 32))
-  | Columns.VUInt32 n -> write_int32_le_to_buffer buf n
-  | Columns.VUInt64 n ->
+  | Column.UInt32 n -> write_int32_le_to_buffer buf n
+  | Column.UInt64 n ->
       write_int32_le_to_buffer buf (Int64.to_int32 (Int64.logand n 0xFFFFFFFFL));
       write_int32_le_to_buffer buf (Int64.to_int32 (Int64.shift_right_logical n 32))
-  | Columns.VFloat64 f ->
+  | Column.Float64 f ->
       let bits = Int64.bits_of_float f in
       write_int32_le_to_buffer buf (Int64.to_int32 (Int64.logand bits 0xFFFFFFFFL));
       write_int32_le_to_buffer buf (Int64.to_int32 (Int64.shift_right_logical bits 32))
-  | Columns.VDateTime (timestamp, _) ->
+  | Column.DateTime (timestamp, _) ->
       write_int32_le_to_buffer buf (Int64.to_int32 timestamp)
-  | Columns.VDateTime64 (timestamp, _precision, _) ->
+  | Column.DateTime64 (timestamp, _precision, _) ->
       write_int32_le_to_buffer buf (Int64.to_int32 (Int64.logand timestamp 0xFFFFFFFFL));
       write_int32_le_to_buffer buf (Int64.to_int32 (Int64.shift_right_logical timestamp 32))
-  | Columns.VEnum8 (_, value) -> Buffer.add_char buf (Char.chr value)
-  | Columns.VEnum16 (_, value) ->
+  | Column.Enum8 (_, value) -> Buffer.add_char buf (Char.chr value)
+  | Column.Enum16 (_, value) ->
       let a = value land 0xFF in
       let b = (value lsr 8) land 0xFF in
       Buffer.add_char buf (Char.chr a);
       Buffer.add_char buf (Char.chr b)
-  | Columns.VArray values ->
+  | Column.Array values ->
       write_varint_to_buffer buf (Array.length values);
       Array.iter (write_value_to_buffer buf) values
-  | Columns.VMap pairs ->
+  | Column.Map pairs ->
       write_varint_to_buffer buf (List.length pairs);
       List.iter (fun (k, v) ->
         write_value_to_buffer buf k;
         write_value_to_buffer buf v
       ) pairs
-  | Columns.VTuple values ->
+  | Column.Tuple values ->
       write_varint_to_buffer buf (List.length values);
       List.iter (write_value_to_buffer buf) values
-  | Columns.VNull -> Buffer.add_char buf '\000'
+  | Column.Null -> Buffer.add_char buf '\000'

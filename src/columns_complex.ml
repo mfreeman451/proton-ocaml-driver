@@ -40,9 +40,9 @@ let reader_complex_of_spec ~(resolver:(string -> (in_channel -> int -> value arr
         for i=0 to n-1 do offsets.(i) <- read_uint64_le ic done;
         let total = if n=0 then 0 else Int64.to_int offsets.(n-1) in
         let all = element_reader ic total in
-        let res = Array.make n (VArray [||]) in
+        let res = Array.make n (Array [||]) in
         let start_idx = ref 0 in
-        for i=0 to n-1 do let e = Int64.to_int offsets.(i) in res.(i) <- VArray (Array.sub all !start_idx (e - !start_idx)); start_idx := e done; res)
+        for i=0 to n-1 do let e = Int64.to_int offsets.(i) in res.(i) <- Array (Array.sub all !start_idx (e - !start_idx)); start_idx := e done; res)
   | _ when starts_with ~prefix:"map(" s ->
       let (kt, vt) = parse_map_types s in
       let kr = resolver kt and vr = resolver vt in
@@ -51,16 +51,16 @@ let reader_complex_of_spec ~(resolver:(string -> (in_channel -> int -> value arr
         for i=0 to n-1 do offsets.(i) <- read_uint64_le ic done;
         let total = if n=0 then 0 else Int64.to_int offsets.(n-1) in
         let keys = kr ic total and vals = vr ic total in
-        let res = Array.make n (VMap []) in
+        let res = Array.make n (Map []) in
         let idx = ref 0 in
-        for i=0 to n-1 do let e = Int64.to_int offsets.(i) in let pairs = ref [] in while !idx < e do pairs := (keys.(!idx), vals.(!idx)) :: !pairs; incr idx done; res.(i) <- VMap (List.rev !pairs) done; res)
+        for i=0 to n-1 do let e = Int64.to_int offsets.(i) in let pairs = ref [] in while !idx < e do pairs := (keys.(!idx), vals.(!idx)) :: !pairs; incr idx done; res.(i) <- Map (List.rev !pairs) done; res)
   | _ when starts_with ~prefix:"tuple(" s ->
       let types = parse_tuple_types s in
       let readers = List.map resolver types in
       Some (fun ic n ->
         let cols = List.map (fun r -> r ic n) readers in
-        let res = Array.make n VNull in
-        for i=0 to n-1 do res.(i) <- VTuple (List.map (fun a -> a.(i)) cols) done; res)
+        let res = Array.make n Null in
+        for i=0 to n-1 do res.(i) <- Tuple (List.map (fun a -> a.(i)) cols) done; res)
   | _ when starts_with ~prefix:"nullable(" s ->
       let inner = String.sub s 9 (String.length s - 10) |> trim in
       let inner_reader = resolver inner in
@@ -68,7 +68,7 @@ let reader_complex_of_spec ~(resolver:(string -> (in_channel -> int -> value arr
         let nulls = Array.make n false in
         for i=0 to n-1 do nulls.(i) <- (read_uint8 ic <> 0) done;
         let vals = inner_reader ic n in
-        for i=0 to n-1 do if nulls.(i) then vals.(i) <- VNull done; vals)
+        for i=0 to n-1 do if nulls.(i) then vals.(i) <- Null done; vals)
   | _ -> None
 
 let reader_complex_of_spec_br ~(resolver:(string -> (Buffered_reader.t -> int -> value array))) (s:string)
@@ -83,9 +83,9 @@ let reader_complex_of_spec_br ~(resolver:(string -> (Buffered_reader.t -> int ->
         for i=0 to n-1 do offsets.(i) <- read_uint64_le_br br done;
         let total = if n=0 then 0 else Int64.to_int offsets.(n-1) in
         let all = element_reader br total in
-        let res = Array.make n (VArray [||]) in
+        let res = Array.make n (Array [||]) in
         let start_idx = ref 0 in
-        for i=0 to n-1 do let e = Int64.to_int offsets.(i) in res.(i) <- VArray (Array.sub all !start_idx (e - !start_idx)); start_idx := e done; res)
+        for i=0 to n-1 do let e = Int64.to_int offsets.(i) in res.(i) <- Array (Array.sub all !start_idx (e - !start_idx)); start_idx := e done; res)
   | _ when starts_with ~prefix:"map(" s ->
       let (kt, vt) = parse_map_types s in
       let kr = resolver kt and vr = resolver vt in
@@ -94,16 +94,16 @@ let reader_complex_of_spec_br ~(resolver:(string -> (Buffered_reader.t -> int ->
         for i=0 to n-1 do offsets.(i) <- read_uint64_le_br br done;
         let total = if n=0 then 0 else Int64.to_int offsets.(n-1) in
         let keys = kr br total and vals = vr br total in
-        let res = Array.make n (VMap []) in
+        let res = Array.make n (Map []) in
         let idx = ref 0 in
-        for i=0 to n-1 do let e = Int64.to_int offsets.(i) in let pairs = ref [] in while !idx < e do pairs := (keys.(!idx), vals.(!idx)) :: !pairs; incr idx done; res.(i) <- VMap (List.rev !pairs) done; res)
+        for i=0 to n-1 do let e = Int64.to_int offsets.(i) in let pairs = ref [] in while !idx < e do pairs := (keys.(!idx), vals.(!idx)) :: !pairs; incr idx done; res.(i) <- Map (List.rev !pairs) done; res)
   | _ when starts_with ~prefix:"tuple(" s ->
       let types = parse_tuple_types s in
       let readers = List.map resolver types in
       Some (fun br n ->
         let cols = List.map (fun r -> r br n) readers in
-        let res = Array.make n VNull in
-        for i=0 to n-1 do res.(i) <- VTuple (List.map (fun a -> a.(i)) cols) done; res)
+        let res = Array.make n Null in
+        for i=0 to n-1 do res.(i) <- Tuple (List.map (fun a -> a.(i)) cols) done; res)
   | _ when starts_with ~prefix:"nullable(" s ->
       let inner = String.sub s 9 (String.length s - 10) |> trim in
       let inner_reader = resolver inner in
@@ -111,5 +111,5 @@ let reader_complex_of_spec_br ~(resolver:(string -> (Buffered_reader.t -> int ->
         let nulls = Array.make n false in
         for i=0 to n-1 do nulls.(i) <- (read_uint8_br br <> 0) done;
         let vals = inner_reader br n in
-        for i=0 to n-1 do if nulls.(i) then vals.(i) <- VNull done; vals)
+        for i=0 to n-1 do if nulls.(i) then vals.(i) <- Null done; vals)
   | _ -> None

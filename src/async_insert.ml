@@ -1,6 +1,6 @@
 (* file: async_insert.ml *)
 open Lwt.Syntax
-open Columns
+open Column
 
 (* Configuration for async insert behavior *)
 type config = {
@@ -48,15 +48,15 @@ type t = {
 let estimate_row_size (row: value list) : int =
   List.fold_left (fun acc value ->
     acc + match value with
-    | VNull -> 1
-    | VString s -> String.length s + 8
-    | VInt32 _ | VUInt32 _ -> 4
-    | VInt64 _ | VUInt64 _ | VFloat64 _ -> 8
-    | VDateTime _ -> 4
-    | VDateTime64 _ -> 8
-    | VEnum8 _ -> 1
-    | VEnum16 _ -> 2
-    | VArray _ | VMap _ | VTuple _ -> 64 (* Rough estimate for complex types *)
+    | Null -> 1
+    | String s -> String.length s + 8
+    | Int32 _ | UInt32 _ -> 4
+    | Int64 _ | UInt64 _ | Float64 _ -> 8
+    | DateTime _ -> 4
+    | DateTime64 _ -> 8
+    | Enum8 _ -> 1
+    | Enum16 _ -> 2
+    | Array _ | Map _ | Tuple _ -> 64 (* Rough estimate for complex types *)
   ) 0 row
 
 (* Create a new async inserter *)
@@ -131,7 +131,7 @@ let send_native_batch inserter (rows: value list list) (columns: (string * strin
               | r0 :: _ ->
                   let cols = List.length r0 in
                   let n = List.length rows in
-                  let out = Array.init cols (fun _ -> Array.make n VNull) in
+                  let out = Array.init cols (fun _ -> Array.make n Null) in
                   let rec fill r_idx = function
                     | [] -> ()
                     | row :: tl ->

@@ -37,7 +37,7 @@ let run () =
       | Connection.PData b ->
           let rows = Block.get_rows b in
           List.iter (fun row ->
-            let s = String.concat ", " (List.map Columns.value_to_string row) in
+            let s = String.concat ", " (List.map Column.value_to_string row) in
             printf "[live] row: %s\n%!" s
           ) rows;
           reader_loop ()

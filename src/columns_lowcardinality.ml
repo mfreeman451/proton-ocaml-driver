@@ -20,12 +20,12 @@ let reader_lowcardinality_of_spec ~(resolver:(string -> (in_channel -> int -> va
         | 1 -> Binary.read_int16_le ic |> Int32.to_int
         | 2 -> Binary.read_int32_le ic |> Int32.to_int
         | _ -> read_uint64_le ic |> Int64.to_int in
-      let res = Array.make n VNull in
+      let res = Array.make n Null in
       for i=0 to n-1 do
         let idx = if i < keys_rows then read_key () else 0 in
-        if inner_nullable && idx = 0 then res.(i) <- VNull else
+        if inner_nullable && idx = 0 then res.(i) <- Null else
         let di = if inner_nullable then idx - 1 else idx in
-        res.(i) <- if di >= 0 && di < Array.length dict then dict.(di) else VNull
+        res.(i) <- if di >= 0 && di < Array.length dict then dict.(di) else Null
       done;
       res)
   ) else None
@@ -49,12 +49,12 @@ let reader_lowcardinality_of_spec_br ~(resolver:(string -> (Buffered_reader.t ->
         | 1 -> Binary.read_int16_le_br br |> Int32.to_int
         | 2 -> Binary.read_int32_le_br br |> Int32.to_int
         | _ -> read_uint64_le_br br |> Int64.to_int in
-      let res = Array.make n VNull in
+      let res = Array.make n Null in
       for i=0 to n-1 do
         let idx = if i < keys_rows then read_key () else 0 in
-        if inner_nullable && idx = 0 then res.(i) <- VNull else
+        if inner_nullable && idx = 0 then res.(i) <- Null else
         let di = if inner_nullable then idx - 1 else idx in
-        res.(i) <- if di >= 0 && di < Array.length dict then dict.(di) else VNull
+        res.(i) <- if di >= 0 && di < Array.length dict then dict.(di) else Null
       done;
       res)
   ) else None
