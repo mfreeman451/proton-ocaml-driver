@@ -27,10 +27,10 @@ let execute c (query:string) : query_result Lwt.t =
           (if !cols_header = None then cols_header := Some (Block.columns_with_types b); loop ())
         else
           let rows = Block.get_rows b in
-          rows_acc := !rows_acc @ rows; loop ()
+          rows_acc := List.rev_append rows !rows_acc; loop ()
     | PTotals b ->
         let rows = Block.get_rows b in
-        rows_acc := !rows_acc @ rows; loop ()
+        rows_acc := List.rev_append rows !rows_acc; loop ()
     | PExtremes _ -> loop ()
     | PLog _ -> loop ()
     | PProgress | PProfileInfo -> loop ()
@@ -38,14 +38,14 @@ let execute c (query:string) : query_result Lwt.t =
   loop () >|= fun () ->
   match !rows_acc, !cols_header with
   | [], _ -> NoRows
-  | rows, Some columns -> Rows (rows, columns)
+  | rows, Some columns -> Rows (List.rev rows, columns)
   | rows, None ->
       let columns =
         match rows with
         | r::_ -> List.mapi (fun i _ -> (Printf.sprintf "c%d" (i+1), "")) r
         | [] -> []
       in
-      Rows (rows, columns)
+      Rows (List.rev rows, columns)
 
 (* Streaming query functionality *)
 
