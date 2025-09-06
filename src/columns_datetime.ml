@@ -33,13 +33,13 @@ let reader_datetime_of_spec (s:string)
       let a0 = read_uint8 ic in
       let b0 = read_uint8 ic in
       let days = a0 lor (b0 lsl 8) in
-      let seconds = Int64.of_int (days * 86400) in
-      a.(i) <- VString (let tm = Unix.gmtime (Int64.to_float seconds) in Printf.sprintf "%04d-%02d-%02d" (tm.tm_year+1900) (tm.tm_mon+1) tm.tm_mday)
+      let seconds = Int64.mul (Int64.of_int days) 86400L in
+      a.(i) <- VDateTime (seconds, None)
     done; a)
   | _ when s = "date32" -> Some (fun ic n -> let a = Array.make n VNull in for i=0 to n-1 do
       let days = read_int32_le ic |> Int32.to_int in
-      let seconds = Int64.of_int (days * 86400) in
-      a.(i) <- VString (let tm = Unix.gmtime (Int64.to_float seconds) in Printf.sprintf "%04d-%02d-%02d" (tm.tm_year+1900) (tm.tm_mon+1) tm.tm_mday)
+      let seconds = Int64.mul (Int64.of_int days) 86400L in
+      a.(i) <- VDateTime (seconds, None)
     done; a)
   | _ when has_prefix s "datetime64" ->
       let (precision, timezone) = parse_datetime64_params s in
@@ -57,13 +57,13 @@ let reader_datetime_of_spec_br (s:string)
       let a0 = Buffered_reader.input_byte br in
       let b0 = Buffered_reader.input_byte br in
       let days = a0 lor (b0 lsl 8) in
-      let seconds = Int64.of_int (days * 86400) in
-      a.(i) <- VString (let tm = Unix.gmtime (Int64.to_float seconds) in Printf.sprintf "%04d-%02d-%02d" (tm.tm_year+1900) (tm.tm_mon+1) tm.tm_mday)
+      let seconds = Int64.mul (Int64.of_int days) 86400L in
+      a.(i) <- VDateTime (seconds, None)
     done; a)
   | _ when s = "date32" -> Some (fun br n -> let a = Array.make n VNull in for i=0 to n-1 do
       let days = read_int32_le_br br |> Int32.to_int in
-      let seconds = Int64.of_int (days * 86400) in
-      a.(i) <- VString (let tm = Unix.gmtime (Int64.to_float seconds) in Printf.sprintf "%04d-%02d-%02d" (tm.tm_year+1900) (tm.tm_mon+1) tm.tm_mday)
+      let seconds = Int64.mul (Int64.of_int days) 86400L in
+      a.(i) <- VDateTime (seconds, None)
     done; a)
   | _ when has_prefix s "datetime64" ->
       let (precision, timezone) = parse_datetime64_params s in
