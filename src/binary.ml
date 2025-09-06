@@ -9,11 +9,11 @@ let really_input_bytes ic n =
   buf
 
 (* Basic types - Little Endian *)
-let read_uint8 ic = input_byte ic
+let[@inline] read_uint8 ic = input_byte ic
 
-let write_uint8 oc v = output_byte oc v
+let[@inline] write_uint8 oc v = output_byte oc v
 
-let read_int32_le ic =
+let[@inline] read_int32_le ic =
   let a = input_byte ic in
   let b = input_byte ic in
   let c = input_byte ic in
@@ -26,7 +26,7 @@ let read_int32_le ic =
           (Int32.shift_left (Int32.of_int c) 16)
           (Int32.shift_left (Int32.of_int d) 24)))
 
-let write_int32_le oc v =
+let[@inline] write_int32_le oc v =
   let a = Int32.to_int (Int32.logand v 0xFFl) in
   let b = Int32.to_int (Int32.logand (Int32.shift_right_logical v 8) 0xFFl) in
   let c = Int32.to_int (Int32.logand (Int32.shift_right_logical v 16) 0xFFl) in
@@ -36,24 +36,24 @@ let write_int32_le oc v =
   output_byte oc c;
   output_byte oc d
 
-let read_uint64_le ic =
+let[@inline] read_uint64_le ic =
   let low = read_int32_le ic in
   let high = read_int32_le ic in
   Int64.logor 
     (Int64.logand (Int64.of_int32 low) 0xFFFFFFFFL)
     (Int64.shift_left (Int64.of_int32 high) 32)
 
-let write_uint64_le oc v =
+let[@inline] write_uint64_le oc v =
   let low = Int64.to_int (Int64.logand v 0xFFFFFFFFL) in
   let high = Int64.to_int (Int64.shift_right_logical v 32) in
   write_int32_le oc (Int32.of_int low);
   write_int32_le oc (Int32.of_int high)
 
-let read_float64_le ic =
+let[@inline] read_float64_le ic =
   let bits = read_uint64_le ic in
   Int64.float_of_bits bits
 
-let write_float64_le oc v =
+let[@inline] write_float64_le oc v =
   let bits = Int64.bits_of_float v in
   write_uint64_le oc bits
 
@@ -76,7 +76,7 @@ let really_input_bytes_br br n =
 
 (* keep read_uint8_br as alias *)
 
-let read_int32_le_br br =
+let[@inline] read_int32_le_br br =
   let a = Buffered_reader.input_byte br in
   let b = Buffered_reader.input_byte br in
   let c = Buffered_reader.input_byte br in
@@ -89,19 +89,19 @@ let read_int32_le_br br =
           (Int32.shift_left (Int32.of_int c) 16)
           (Int32.shift_left (Int32.of_int d) 24)))
 
-let read_uint64_le_br br =
+let[@inline] read_uint64_le_br br =
   let low = read_int32_le_br br in
   let high = read_int32_le_br br in
   Int64.logor 
     (Int64.logand (Int64.of_int32 low) 0xFFFFFFFFL)
     (Int64.shift_left (Int64.of_int32 high) 32)
 
-let read_int64_le_br br =
+let[@inline] read_int64_le_br br =
   let low = read_int32_le_br br in
   let high = read_int32_le_br br in
   Int64.logor (Int64.of_int32 low) (Int64.shift_left (Int64.of_int32 high) 32)
 
-let read_float64_le_br br =
+let[@inline] read_float64_le_br br =
   let bits = read_uint64_le_br br in
   Int64.float_of_bits bits
 
@@ -117,7 +117,7 @@ let read_str_br br =
   if len = 0 then "" else Buffered_reader.really_input_string br len
 
 (* Bytes helpers for compression module *)
-let bytes_get_int32_le buf offset =
+let[@inline] bytes_get_int32_le buf offset =
   let a = Char.code (Bytes.get buf offset) in
   let b = Char.code (Bytes.get buf (offset + 1)) in
   let c = Char.code (Bytes.get buf (offset + 2)) in
@@ -130,7 +130,7 @@ let bytes_get_int32_le buf offset =
           (Int32.shift_left (Int32.of_int c) 16)
           (Int32.shift_left (Int32.of_int d) 24)))
 
-let bytes_set_int32_le buf offset v =
+let[@inline] bytes_set_int32_le buf offset v =
   let a = Int32.to_int (Int32.logand v 0xFFl) in
   let b = Int32.to_int (Int32.logand (Int32.shift_right_logical v 8) 0xFFl) in
   let c = Int32.to_int (Int32.logand (Int32.shift_right_logical v 16) 0xFFl) in
@@ -140,14 +140,14 @@ let bytes_set_int32_le buf offset v =
   Bytes.set buf (offset + 2) (Char.chr c);
   Bytes.set buf (offset + 3) (Char.chr d)
 
-let bytes_get_int64_le buf offset =
+let[@inline] bytes_get_int64_le buf offset =
   let low = bytes_get_int32_le buf offset in
   let high = bytes_get_int32_le buf (offset + 4) in
   Int64.logor 
     (Int64.logand (Int64.of_int32 low) 0xFFFFFFFFL)
     (Int64.shift_left (Int64.of_int32 high) 32)
 
-let bytes_set_int64_le buf offset v =
+let[@inline] bytes_set_int64_le buf offset v =
   let low = Int64.to_int (Int64.logand v 0xFFFFFFFFL) in
   let high = Int64.to_int (Int64.shift_right_logical v 32) in
   bytes_set_int32_le buf offset (Int32.of_int low);
@@ -158,13 +158,13 @@ let read_int16_le ic =
   let v = a lor (b lsl 8) in
   if v land 0x8000 <> 0 then Int32.of_int (v - 0x10000) else Int32.of_int v
 
-let read_int16_le_br br =
+let[@inline] read_int16_le_br br =
   let a = Buffered_reader.input_byte br in
   let b = Buffered_reader.input_byte br in
   let v = a lor (b lsl 8) in
   if v land 0x8000 <> 0 then Int32.of_int (v - 0x10000) else Int32.of_int v
 
-let read_uint8_br br = Buffered_reader.input_byte br
+let[@inline] read_uint8_br br = Buffered_reader.input_byte br
 let read_int64_le ic =
   let low = read_int32_le ic in
   let high = read_int32_le ic in

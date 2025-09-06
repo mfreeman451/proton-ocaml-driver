@@ -69,7 +69,7 @@ let fill_buffer br =
   end
 
 (* Read a single byte *)
-let input_byte br =
+let[@inline] input_byte br =
   fill_buffer br;
   if br.eof then raise End_of_file;
   let byte = Bytes.get br.buffer br.pos in
@@ -93,7 +93,7 @@ let really_input br buf offset len =
   loop 0
 
 (* Read exactly n bytes and return as string *)
-let really_input_string br len =
+let[@inline] really_input_string br len =
   let buf = Bytes.create len in
   really_input br buf 0 len;
   Bytes.to_string buf
