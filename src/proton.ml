@@ -6,7 +6,6 @@ module Binary = Binary
 module Errors = Errors
 module Context = Context
 module Column = Column
-module Columns = Column (* temporary alias for backward compatibility *)
 module Block_info = Block_info
 module Block = Block
 module Connection = Connection

@@ -136,7 +136,7 @@ let time_it_lwt name f =
   printf "[%s] %.3f seconds\n%!" name elapsed;
   Lwt.return (result, elapsed)
 
-(* Generate test data as Columns.value lists *)
+(* Generate test data as Column.value lists *)
 let generate_batch_data count =
   let rows = Array.init count (fun i ->
     let id = Int32.of_int (i + 1) in
@@ -407,8 +407,8 @@ let test_million_rows () =
   printf "  Rate: %.0f rows/second\n%!" insert_rate;
   printf "  Time: %.2f minutes\n%!" (1_000_000.0 /. insert_rate /. 60.0);
   (* Show cache stats for column readers to validate cache behavior *)
-  let stats = Columns.get_cache_stats () in
-  printf "  Column Reader Cache: %s\n%!" (Columns.cache_stats_to_string stats);
+  let stats = Column.get_cache_stats () in
+  printf "  Column Reader Cache: %s\n%!" (Column.cache_stats_to_string stats);
   
   Lwt.return_unit
 

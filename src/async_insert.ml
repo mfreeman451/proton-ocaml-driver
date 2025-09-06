@@ -283,7 +283,7 @@ let add_row ?(columns=[]) inserter (row: value list) =
   Lwt_mutex.with_lock inserter.mutex (fun () ->
       let* () =
         if inserter.buffer.column_names = None then (
-          if columns = [] then Lwt.fail_with "Columns must be provided with the first row"
+          if columns = [] then Lwt.fail_with "Column names/types must be provided with the first row"
           else (
             let (names, types) = List.split columns in
             inserter.buffer.column_names <- Some names;

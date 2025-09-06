@@ -1,4 +1,4 @@
-open Columns_types
+open Column_types
 open Binary
 
 let reader_lowcardinality_of_spec ~(resolver:(string -> (in_channel -> int -> value array))) (s:string)
@@ -58,3 +58,4 @@ let reader_lowcardinality_of_spec_br ~(resolver:(string -> (Buffered_reader.t ->
       done;
       res)
   ) else None
+

@@ -406,12 +406,12 @@ let test_datetime64_with_timezone () =
   | _ -> Alcotest.(check bool) "DateTime64 with timezone parser created" true false
 
 let test_datetime_value_formatting () =
-  let dt_value = Columns.DateTime (1609459200L, Some "UTC") in (* 2021-01-01 00:00:00 UTC *)
+  let dt_value = Column.DateTime (1609459200L, Some "UTC") in (* 2021-01-01 00:00:00 UTC *)
   let dt_str = Column.value_to_string dt_value in
   Alcotest.(check bool) "DateTime value formatting" true (String.length dt_str > 0)
 
 let test_datetime64_value_formatting () =
-  let dt64_value = Columns.DateTime64 (1609459200000L, 3, Some "UTC") in
+  let dt64_value = Column.DateTime64 (1609459200000L, 3, Some "UTC") in
   let dt64_str = Column.value_to_string dt64_value in
   Alcotest.(check bool) "DateTime64 value formatting" true (String.length dt64_str > 0)
 
@@ -441,10 +441,10 @@ let test_datetime_binary_roundtrip () =
   
   (* Verify we got the expected value *)
   match values.(0) with
-  | Columns.DateTime (ts, tz) ->
+  | Column.DateTime (ts, tz) ->
       Alcotest.(check bool) "DateTime timestamp matches" true (ts = test_timestamp);
       Alcotest.(check bool) "DateTime timezone matches" true (tz = None)
-  | _ -> Alcotest.fail "Expected VDateTime value"
+  | _ -> Alcotest.fail "Expected DateTime value"
 
 (* Test DateTime64 binary roundtrip *)  
 let test_datetime64_binary_roundtrip () =
@@ -464,11 +464,11 @@ let test_datetime64_binary_roundtrip () =
   
   (* Verify we got the expected value *)
   match values.(0) with
-  | Columns.DateTime64 (value, precision, tz) ->
+  | Column.DateTime64 (value, precision, tz) ->
       Alcotest.(check bool) "DateTime64 value matches" true (value = test_value);
       Alcotest.(check bool) "DateTime64 precision matches" true (precision = 3);
       Alcotest.(check bool) "DateTime64 timezone matches" true (tz = None)
-  | _ -> Alcotest.fail "Expected VDateTime64 value"
+  | _ -> Alcotest.fail "Expected DateTime64 value"
 
 (* Test reading multiple DateTime values *)
 let test_multiple_datetime_values () =
@@ -496,10 +496,10 @@ let test_multiple_datetime_values () =
   (* Verify all values *)
   for i = 0 to 2 do
     match values.(i) with
-    | Columns.DateTime (ts, tz) ->
+    | Column.DateTime (ts, tz) ->
         Alcotest.(check bool) ("DateTime value " ^ string_of_int i) true (ts = List.nth timestamps i);
         Alcotest.(check bool) ("DateTime timezone " ^ string_of_int i) true (tz = None)
-    | _ -> Alcotest.fail "Expected VDateTime value"
+    | _ -> Alcotest.fail "Expected DateTime value"
   done
 
 (* Array column tests *)
@@ -518,17 +518,17 @@ let test_nested_array_parsing () =
   | _ -> Alcotest.(check bool) "Nested array parser created" true false
 
 let test_array_value_formatting () =
-  let array_value = Columns.Array [|
-    Columns.String "hello";
-    Columns.String "world";
-    Columns.Int32 42l
+  let array_value = Column.Array [|
+    Column.String "hello";
+    Column.String "world";
+    Column.Int32 42l
   |] in
   let array_str = Column.value_to_string array_value in
   let expected = "[hello,world,42]" in
   Alcotest.(check string) "Array formatting" expected array_str
 
 let test_empty_array_formatting () =
-  let empty_array = Columns.Array [||] in
+  let empty_array = Column.Array [||] in
   let array_str = Column.value_to_string empty_array in
   let expected = "[]" in
   Alcotest.(check string) "Empty array formatting" expected array_str
@@ -549,16 +549,16 @@ let test_nested_map_parsing () =
   | _ -> Alcotest.(check bool) "Nested map parser created" true false
 
 let test_map_value_formatting () =
-  let map_value = Columns.Map [
-    (Columns.String "key1", Columns.Int32 42l);
-    (Columns.String "key2", Columns.String "value2")
+  let map_value = Column.Map [
+    (Column.String "key1", Column.Int32 42l);
+    (Column.String "key2", Column.String "value2")
   ] in
   let map_str = Column.value_to_string map_value in
   let expected = "{key1:42,key2:value2}" in
   Alcotest.(check string) "Map formatting" expected map_str
 
 let test_empty_map_formatting () =
-  let empty_map = Columns.Map [] in
+  let empty_map = Column.Map [] in
   let map_str = Column.value_to_string empty_map in
   let expected = "{}" in
   Alcotest.(check string) "Empty map formatting" expected map_str
@@ -571,8 +571,8 @@ let test_enum8_parsing () =
   | { Block.n_rows=3; columns=[c]; _ } ->
       Alcotest.(check string) "Enum8 type" "Enum8('active'=1,'inactive'=2,'pending'=3)" c.Block.type_spec;
       (match c.Block.data with
-      | [| Columns.Enum8 ("active", 1); Columns.Enum8 ("inactive", 2); Columns.Enum8 ("pending", 3) |] -> ()
-      | _ -> Alcotest.fail "Expected VEnum8 values")
+      | [| Column.Enum8 ("active", 1); Column.Enum8 ("inactive", 2); Column.Enum8 ("pending", 3) |] -> ()
+      | _ -> Alcotest.fail "Expected Enum8 values")
   | _ -> Alcotest.fail "Unexpected block structure"
 
 let test_enum16_parsing () =
@@ -582,8 +582,8 @@ let test_enum16_parsing () =
   | { Block.n_rows=2; columns=[c]; _ } ->
       Alcotest.(check string) "Enum16 type" "Enum16('low'=100,'normal'=200,'high'=300)" c.Block.type_spec;
       (match c.Block.data with
-      | [| Columns.Enum16 ("low", 100); Columns.Enum16 ("normal", 200) |] -> ()
-      | _ -> Alcotest.fail "Expected VEnum16 values")
+      | [| Column.Enum16 ("low", 100); Column.Enum16 ("normal", 200) |] -> ()
+      | _ -> Alcotest.fail "Expected Enum16 values")
   | _ -> Alcotest.fail "Unexpected block structure"
 
 let test_enum8_negative () =
@@ -600,14 +600,14 @@ let test_enum8_negative () =
   match read_block_from_bytes bs with
   | { Block.n_rows=1; columns=[c]; _ } ->
       (match c.Block.data with
-      | [| Columns.Enum8 ("off", -1) |] -> ()
-      | _ -> Alcotest.fail "Expected VEnum8 with negative value")
+      | [| Column.Enum8 ("off", -1) |] -> ()
+      | _ -> Alcotest.fail "Expected Enum8 with negative value")
   | _ -> Alcotest.fail "Unexpected block structure"
 
 
 let test_enum_value_formatting () =
-  let enum8_val = Columns.Enum8 ("active", 1) in
-  let enum16_val = Columns.Enum16 ("high", 300) in
+  let enum8_val = Column.Enum8 ("active", 1) in
+  let enum16_val = Column.Enum16 ("high", 300) in
   Alcotest.(check string) "Enum8 string format" "active" (Column.value_to_string enum8_val);
   Alcotest.(check string) "Enum16 string format" "high" (Column.value_to_string enum16_val)
 
@@ -619,7 +619,7 @@ let test_enum_unknown_values () =
   match read_block_from_bytes bs with
   | { Block.n_rows=1; columns=[c]; _ } ->
       (match c.Block.data with
-      | [| Columns.Enum8 ("known", 1) |] -> ()
+      | [| Column.Enum8 ("known", 1) |] -> ()
       | _ -> Alcotest.fail "Expected known enum value")
   | _ -> Alcotest.fail "Unexpected block structure"
 
@@ -644,7 +644,7 @@ let test_buffer_management () =
   let config = Async_insert.default_config "test_table" in
   let inserter = Async_insert.create config conn in
   
-  let test_row = [Columns.String "test"; Columns.Int32 42l] in
+  let test_row = [Column.String "test"; Column.Int32 42l] in
   let columns = [("name", "String"); ("value", "Int32")] in
   
   Lwt_main.run (
@@ -664,8 +664,8 @@ let test_batch_size_limits () =
   let inserter = Async_insert.create config conn in
   
   let test_rows = [
-    [Columns.String "test1"; Columns.Int32 1l];
-    [Columns.String "test2"; Columns.Int32 2l];
+    [Column.String "test1"; Column.Int32 1l];
+    [Column.String "test2"; Column.Int32 2l];
   ] in
   let columns = [("name", "String"); ("value", "Int32")] in
   
@@ -681,8 +681,8 @@ let test_row_estimation () =
   let config = Async_insert.default_config "test_table" in
   let inserter = Async_insert.create config conn in
   
-  let small_row = [Columns.String "a"; Columns.Int32 1l] in
-  let large_row = [Columns.String (String.make 100 'a'); Columns.Int64 1L] in
+  let small_row = [Column.String "a"; Column.Int32 1l] in
+  let large_row = [Column.String (String.make 100 'a'); Column.Int64 1L] in
   let columns = [("name", "String"); ("value", "Int32")] in
   
   Lwt_main.run (

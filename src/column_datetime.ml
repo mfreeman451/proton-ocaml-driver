@@ -1,4 +1,4 @@
-open Columns_types
+open Column_types
 open Binary
 
 let parse_datetime_params s =
@@ -72,3 +72,4 @@ let reader_datetime_of_spec_br (s:string)
       let timezone = match parse_datetime_params s with None -> None | Some tz -> Some (if tz.[0]='\'' && tz.[String.length tz - 1]='\'' then String.sub tz 1 (String.length tz - 2) else tz) in
       Some (fun br n -> let a = Array.make n Null in for i=0 to n-1 do let ts = read_int32_le_br br |> Int64.of_int32 in a.(i) <- DateTime (Int64.logand ts 0xFFFFFFFFL, timezone) done; a)
   | _ -> None
+

@@ -9,7 +9,7 @@ let () =
       Client.disconnect client
   | Client.Rows (rows, columns) ->
       let cols = String.concat ", " (List.map fst columns) in
-      let* () = Lwt_io.printf "Columns: %s\n" cols in
+      let* () = Lwt_io.printf "Column names: %s\n" cols in
       let* () = Lwt_list.iter_s (fun row ->
         let cells = row |> List.map Column.value_to_string |> String.concat " | " in
         Lwt_io.printf "Row: %s\n" cells

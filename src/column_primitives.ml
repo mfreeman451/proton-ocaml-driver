@@ -1,4 +1,4 @@
-open Columns_types
+open Column_types
 open Binary
 
 (* Cheap formatters to avoid Printf in hot paths *)
@@ -228,3 +228,4 @@ let reader_primitive_of_spec_br (s:string)
       (* Decimal values are stored as integers. For Decimal(10,2) it's int64 *)
       Some (fun br n -> let a = Array.make n Null in for i=0 to n-1 do a.(i) <- Int64 (read_uint64_le_br br) done; a)
   | _ -> None
+

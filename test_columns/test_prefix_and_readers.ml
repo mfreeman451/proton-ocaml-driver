@@ -2,7 +2,7 @@ open Proton
 
 let test_has_prefix () =
   let check msg exp got = Alcotest.(check bool) msg exp got in
-  (* has_prefix is re-exported via Columns (include Columns_types) *)
+  (* has_prefix available via Column (include Column_types) *)
   check "exact match" true (Column.has_prefix "datetime64" "datetime64");
   check "simple true" true (Column.has_prefix "datetime64(3)" "datetime64");
   check "simple false" false (Column.has_prefix "date" "datetime");

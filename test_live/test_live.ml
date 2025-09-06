@@ -16,7 +16,7 @@ module TestResult = struct
     query: string;
     _query_type: string;
     elapsed_ms: float;
-    rows: Columns.value list list;
+    rows: Column.value list list;
     column_names: string list;
     _column_types: string list;
   }

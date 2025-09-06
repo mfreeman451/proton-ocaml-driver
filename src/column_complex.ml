@@ -1,4 +1,4 @@
-open Columns_types
+open Column_types
 open Binary
 
 let trim = String.trim
@@ -113,3 +113,4 @@ let reader_complex_of_spec_br ~(resolver:(string -> (Buffered_reader.t -> int ->
         let vals = inner_reader br n in
         for i=0 to n-1 do if nulls.(i) then vals.(i) <- Null done; vals)
   | _ -> None
+
