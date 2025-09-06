@@ -21,7 +21,7 @@ let test_reader_resolution_noalloc_prefix () =
   ] in
   List.iter (fun spec ->
     (* buffered reader variant *)
-    let br = Buffered_reader.create_from_bytes (Bytes.create 0) in
+    let br = Buffered_reader.create_from_bytes_no_copy (Bytes.create 0) in
     let r_br = Columns.reader_of_spec_br spec in
     let arr = r_br br 0 in
     Alcotest.(check int) ("zero-length ok: " ^ spec) 0 (Array.length arr);
