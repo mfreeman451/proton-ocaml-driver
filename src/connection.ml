@@ -89,17 +89,18 @@ let env_debug_enabled () =
   | Some ("1" | "true" | "TRUE" | "yes" | "YES") -> true
   | _ -> false
 
-let debugf fmt =
-  if env_debug_enabled () then Printf.printf fmt else Printf.ifprintf stdout fmt
+let debugv f = if env_debug_enabled () then f () else ()
 
-let hex_of_string s =
-  let b = Bytes.unsafe_of_string s in
-  let len = Bytes.length b in
-  let buf = Buffer.create (2 * len) in
+let hex_of_string (s:string) : string =
+  let len = String.length s in
+  let out = Bytes.create (2 * len) in
+  let hexdig = "0123456789abcdef" in
   for i = 0 to len - 1 do
-    Buffer.add_string buf (Printf.sprintf "%02x" (Char.code (Bytes.get b i)))
+    let v = Char.code (String.unsafe_get s i) in
+    Bytes.set out (2 * i)     (String.unsafe_get hexdig ((v lsr 4) land 0xF));
+    Bytes.set out (2 * i + 1) (String.unsafe_get hexdig (v land 0xF))
   done;
-  Buffer.contents buf
+  Bytes.unsafe_to_string out
 
 let read_file path =
   let ic = open_in_bin path in
@@ -190,9 +191,9 @@ let connect t =
   in
   get_addr t.host >>= fun addr ->
   let sockaddr = Unix.ADDR_INET (addr, t.port) in
-  debugf "[proton] connect: %s:%d (addr=%s)\n" t.host t.port (Unix.string_of_inet_addr addr);
+  debugv (fun () -> Printf.printf "[proton] connect: %s:%d (addr=%s)\n" t.host t.port (Unix.string_of_inet_addr addr));
   Lwt_unix.with_timeout Defines.dbms_default_connect_timeout_sec (fun () -> Lwt_unix.connect fd sockaddr) >>= fun () ->
-  debugf "[proton] connect: socket connected\n";
+  debugv (fun () -> Printf.printf "[proton] connect: socket connected\n");
   (if t.tls_config.enable_tls then
      let open Tls in
      let authenticator =
@@ -217,7 +218,7 @@ let connect t =
       | Ok raw -> let h = Domain_name.host_exn raw in Tls_lwt.Unix.client_of_fd config ~host:h fd
       | Error _ -> Tls_lwt.Unix.client_of_fd config fd) >|= fun tls -> `Tls (fd, tls)
    else Lwt.return (`Fd fd)) >>= function
-  | `Tls (fd', tls) -> t.tls <- Some tls; t.fd <- Some fd'; t.connected <- true; debugf "[proton] TLS handshake complete\n"; Lwt.return_unit
+  | `Tls (fd', tls) -> t.tls <- Some tls; t.fd <- Some fd'; t.connected <- true; debugv (fun () -> Printf.printf "[proton] TLS handshake complete\n"); Lwt.return_unit
   | `Fd fd' -> t.fd <- Some fd'; t.connected <- true; Lwt.return_unit
 
 let disconnect t =
@@ -242,8 +243,8 @@ let send_hello t =
   let buf = Buffer.create 256 in
   write_varint_int_to_buffer buf (client_packet_to_int Hello);
   let s = Defines.dbms_name ^ " " ^ Defines.client_name in
-  debugf "[proton] send_hello: client_name='%s' maj=%d min=%d rev=%d db='%s' user='%s' pw_len=%d\n"
-    s Defines.client_version_major Defines.client_version_minor Defines.client_revision t.database t.user (String.length t.password);
+  debugv (fun () -> Printf.printf "[proton] send_hello: client_name='%s' maj=%d min=%d rev=%d db='%s' user='%s' pw_len=%d\n"
+    s Defines.client_version_major Defines.client_version_minor Defines.client_revision t.database t.user (String.length t.password));
   write_varint_int_to_buffer buf (String.length s); Buffer.add_string buf s;
   write_varint_int_to_buffer buf Defines.client_version_major;
   write_varint_int_to_buffer buf Defines.client_version_minor;
@@ -252,8 +253,8 @@ let send_hello t =
   write_varint_int_to_buffer buf (String.length t.user); Buffer.add_string buf t.user;
   write_varint_int_to_buffer buf (String.length t.password); Buffer.add_string buf t.password;
   let payload = Buffer.contents buf in
-  debugf "[proton] send_hello: bytes=%s\n" (hex_of_string payload);
-  write_buf writev_fn buf
+  debugv (fun () -> Printf.printf "[proton] send_hello: bytes=%s\n" (hex_of_string payload));
+  writev_fn [payload]
 
 let receive_hello t =
   let read_fn = match t.tls, t.fd with
@@ -261,9 +262,9 @@ let receive_hello t =
     | None, Some fd -> (fun b o l -> Lwt_unix.read fd b o l)
     | _ -> fun _ _ _ -> Lwt.fail (Failure "not connected")
   in
-  debugf "[proton] receive_hello: waiting for server hello...\n";
+  debugv (fun () -> Printf.printf "[proton] receive_hello: waiting for server hello...\n");
   Lwt_unix.with_timeout Defines.dbms_default_sync_request_timeout_sec (fun () -> read_varint_int_lwt read_fn) >>= fun p ->
-  debugf "[proton] receive_hello: server packet=%d\n" p;
+  debugv (fun () -> Printf.printf "[proton] receive_hello: server packet=%d\n" p);
   match Protocol.server_packet_of_int p with
   | SHello ->
       read_str_lwt read_fn >>= fun server_name ->
@@ -278,9 +279,9 @@ let receive_hello t =
          read_varint_int_lwt read_fn else Lwt.return server_revision) >>= fun version_patch ->
       let si = { Context.name = server_name; version_major; version_minor; version_patch;
                  revision = server_revision; timezone = (match server_timezone with Some tz -> Some tz | None -> None); display_name = server_display_name } in
-      debugf "[proton] receive_hello: name='%s' ver=%d.%d.%d rev=%d tz=%s display='%s'\n"
+      debugv (fun () -> Printf.printf "[proton] receive_hello: name='%s' ver=%d.%d.%d rev=%d tz=%s display='%s'\n"
         server_name version_major version_minor version_patch server_revision
-        (match si.timezone with Some tz -> tz | None -> "-") server_display_name;
+        (match si.timezone with Some tz -> tz | None -> "-") server_display_name);
       t.srv <- Some si; t.ctx.server_info <- Some si; Lwt.return_unit
   | SException -> Lwt.fail (Failure "Server exception in hello")
   | _other -> Lwt.fail (Unexpected_packet (Printf.sprintf "Expected HELLO, got %d" p))
@@ -302,9 +303,9 @@ let send_data_block t (block: Block.t) =
   (* Debug info about the outgoing block *)
   let is_header = (block.n_rows = 0 && List.length block.columns > 0) in
   let is_terminator = (block.n_rows = 0 && List.length block.columns = 0) in
-  debugf "[proton] send_data_block: cols=%d rows=%d kind=%s\n"
+  debugv (fun () -> Printf.printf "[proton] send_data_block: cols=%d rows=%d kind=%s\n"
     (List.length block.columns) block.n_rows
-    (if is_header then "header" else if is_terminator then "terminator" else "data");
+    (if is_header then "header" else if is_terminator then "terminator" else "data"));
   (* Build block payload (info + columns + rows) in a separate buffer. *)
   let buf_block = Buffer.create 4096 in
   (* Write block info *)
@@ -432,7 +433,7 @@ let send_query_without_data_end t ?(query_id="") (query:string) =
   write_varint_int_to_buffer buf (qps_to_int Complete);
   write_varint_int_to_buffer buf (compression_to_int t.compression);
   write_varint_int_to_buffer buf (String.length query); Buffer.add_string buf query;
-  debugf "[proton] send_query_without_data_end: %s\n" query;
+  debugv (fun () -> Printf.printf "[proton] send_query_without_data_end: %s\n" query);
   (* For INSERT ... FORMAT Native, ClickHouse/Proton expects an explicit end
      of external tables: send a zero-column, zero-row Data block first. Then
      the client will send the header, data block(s), and a final terminator. *)
