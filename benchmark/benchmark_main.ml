@@ -4,6 +4,128 @@ open Printf
 let host = "127.0.0.1"
 let port = 8463
 
+(* -------- Reader micro-benchmarks (cache effectiveness) -------- *)
+
+let encode_int32_values n : bytes =
+  let open Binary in
+  let b = Bytes.create (4 * n) in
+  for i = 0 to n - 1 do
+    let v = Int32.of_int (i land 0x7fffffff) in
+    bytes_set_int32_le b (4 * i) v
+  done; b
+
+let encode_uint64_values n : bytes =
+  let open Binary in
+  let b = Bytes.create (8 * n) in
+  for i = 0 to n - 1 do
+    let v = Int64.of_int i in
+    bytes_set_int64_le b (8 * i) v
+  done; b
+
+let encode_float64_values n : bytes =
+  let open Binary in
+  let b = Bytes.create (8 * n) in
+  for i = 0 to n - 1 do
+    let f = float_of_int i +. 0.125 in
+    let bits = Int64.bits_of_float f in
+    bytes_set_int64_le b (8 * i) bits
+  done; b
+
+let encode_date32_values n : bytes =
+  let open Binary in
+  let b = Bytes.create (4 * n) in
+  for i = 0 to n - 1 do
+    (* arbitrary day count *)
+    let days = Int32.of_int (i mod (365 * 50)) in
+    bytes_set_int32_le b (4 * i) days
+  done; b
+
+let encode_array_int32 n ~k : bytes =
+  (* Array(Int32): [uint64 offsets]*n then [int32 values]*total *)
+  let open Binary in
+  let total = n * k in
+  let b = Bytes.create (8 * n + 4 * total) in
+  (* offsets *)
+  for i = 0 to n - 1 do
+    let off = Int64.of_int ((i + 1) * k) in
+    bytes_set_int64_le b (8 * i) off
+  done;
+  (* values *)
+  let base = 8 * n in
+  for i = 0 to total - 1 do
+    let v = Int32.of_int (i land 0x7fffffff) in
+    bytes_set_int32_le b (base + 4 * i) v
+  done; b
+
+let encode_tuple_int32_float64 n : bytes =
+  (* Tuple(Int32, Float64): column-wise: int32[n] then float64[n] *)
+  let open Binary in
+  let b = Bytes.create (4 * n + 8 * n) in
+  for i = 0 to n - 1 do
+    let v = Int32.of_int (i land 0x7fffffff) in
+    bytes_set_int32_le b (4 * i) v
+  done;
+  let base = 4 * n in
+  for i = 0 to n - 1 do
+    let f = float_of_int i +. 0.5 in
+    let bits = Int64.bits_of_float f in
+    bytes_set_int64_le b (base + 8 * i) bits
+  done; b
+
+let encode_nullable_int32 n : bytes =
+  (* Nullable(Int32): null flags [uint8]*n then values [int32]*n *)
+  let open Binary in
+  let b = Bytes.create (n + 4 * n) in
+  for i = 0 to n - 1 do
+    (* all non-null -> flag 0 *)
+    Bytes.set b i (Char.chr 0);
+  done;
+  let base = n in
+  for i = 0 to n - 1 do
+    let v = Int32.of_int (i land 0x7fffffff) in
+    bytes_set_int32_le b (base + 4 * i) v
+  done; b
+
+let time f =
+  let t0 = Unix.gettimeofday () in
+  let x = f () in
+  let t1 = Unix.gettimeofday () in
+  (x, t1 -. t0)
+
+let bench_reader_for_spec ~spec ~rows ~loops make_bytes =
+  (* Prepare data once; new BR per iteration *)
+  let payload = make_bytes rows in
+  (* Baseline: recompile reader every iteration (no cache) *)
+  let (_, cold_s) = time (fun () ->
+    for _i = 1 to loops do
+      let br = Buffered_reader.create_from_bytes payload in
+      let reader = Columns.compile_reader_br spec in
+      ignore (reader br rows)
+    done) in
+  (* Cached: compile once, then reuse *)
+  Columns.reset_cache_stats (); Columns.clear_reader_caches ();
+  let (_, warm_s) = time (fun () ->
+    let reader = Columns.reader_of_spec_br spec in
+    for _i = 1 to loops do
+      let br = Buffered_reader.create_from_bytes payload in
+      ignore (reader br rows)
+    done) in
+  let stats = Columns.get_cache_stats () in
+  printf "  %-28s | rows=%5d loops=%4d | cold=%.4fs warm=%.4fs | %s\n%!"
+    spec rows loops cold_s warm_s (Columns.cache_stats_to_string stats)
+
+let run_reader_micro_benchmarks () =
+  printf "\n=== READER MICRO-BENCHMARKS (cache effectiveness) ===\n%!";
+  let rows = 512 and loops = 1000 in
+  bench_reader_for_spec ~spec:"int32" ~rows ~loops encode_int32_values;
+  bench_reader_for_spec ~spec:"uint64" ~rows ~loops encode_uint64_values;
+  bench_reader_for_spec ~spec:"float64" ~rows ~loops encode_float64_values;
+  bench_reader_for_spec ~spec:"date32" ~rows ~loops encode_date32_values;
+  bench_reader_for_spec ~spec:"array(int32)" ~rows ~loops (fun n -> encode_array_int32 n ~k:3);
+  bench_reader_for_spec ~spec:"tuple(int32,float64)" ~rows ~loops encode_tuple_int32_float64;
+  bench_reader_for_spec ~spec:"nullable(int32)" ~rows ~loops encode_nullable_int32;
+  printf "\n%!"
+
 (* Simple timing utilities *)
 let time_it_lwt name f =
   let open Lwt.Syntax in
@@ -294,6 +416,8 @@ let run_benchmarks () =
   let open Lwt.Syntax in
   Random.self_init ();
   printf "=== 🚀 Proton OCaml Driver ASYNC Performance Benchmarks 🚀 ===\n\n%!";
+  (* Run local micro-benchmarks first (no server needed) *)
+  run_reader_micro_benchmarks ();
   
   printf "Testing connection to %s:%d...\n%!" host port;
   let* () = 
@@ -320,12 +444,7 @@ let run_benchmarks () =
   let* () = test_million_rows () in
   
   printf "\n🎉 All async benchmarks completed!\n%!";
-  printf "\nKey Takeaways:\n%!";
-  printf "- Async batch inserts should show much higher throughput\n%!";
-  printf "- Different batch sizes affect performance\n%!";
-  printf "- Live streaming demonstrates real-time data capture\n%!";
-  printf "- 1M row test shows scalability limits\n\n%!";
-  
+ 
   Lwt.return_unit
 
 let () = Lwt_main.run (run_benchmarks ())
