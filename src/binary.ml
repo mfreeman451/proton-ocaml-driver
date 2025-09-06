@@ -61,9 +61,7 @@ let write_float64_le oc v =
 let read_str ic =
   let len = read_varint_int ic in
   if len = 0 then ""
-  else
-    let buf = really_input_bytes ic len in
-    Bytes.to_string buf
+  else really_input_string ic len
 
 let write_str oc s =
   let len = String.length s in
@@ -116,10 +114,7 @@ let read_varint_int_br br : int =
 
 let read_str_br br =
   let len = read_varint_int_br br in
-  if len = 0 then ""
-  else
-    let buf = really_input_bytes_br br len in
-    Bytes.to_string buf
+  if len = 0 then "" else Buffered_reader.really_input_string br len
 
 (* Bytes helpers for compression module *)
 let bytes_get_int32_le buf offset =
