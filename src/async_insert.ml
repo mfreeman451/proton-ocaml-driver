@@ -44,7 +44,7 @@ type t = {
   mutable flush_promise: unit Lwt.t option;
 }
 
-(* Estimate byte size of a row (remains the same) *)
+(* Estimate byte size of a row *)
 let estimate_row_size (row: value list) : int =
   List.fold_left (fun acc value ->
     acc + match value with
@@ -59,7 +59,7 @@ let estimate_row_size (row: value list) : int =
     | VArray _ | VMap _ | VTuple _ -> 64 (* Rough estimate for complex types *)
   ) 0 row
 
-(* Create a new async inserter (remains the same) *)
+(* Create a new async inserter *)
 let create config connection =
   let buffer = {
     rows = [];
@@ -88,9 +88,7 @@ let env_insert_debug () =
 let logf fmt =
   if env_insert_debug () then Printf.printf fmt else Printf.ifprintf stdout fmt
 
-(**
- * NEW: Sends a batch using the high-performance native protocol.
- *)
+(* Sends a batch using the high-performance native protocol. *)
 let chunk_rows rows chunk_size =
   let rec loop acc cur n = function
     | [] -> List.rev (if cur = [] then acc else (List.rev cur)::acc)
@@ -188,7 +186,7 @@ let flush_buffer inserter =
       send_native_batch inserter rows_to_send columns_spec
   )
 
-(* Check if buffer should be flushed (remains the same) *)
+(* Check if buffer should be flushed *)
 let should_flush inserter =
   let now = Unix.gettimeofday () in
   (inserter.buffer.row_count > 0 && (
@@ -197,7 +195,7 @@ let should_flush inserter =
     (now -. inserter.buffer.last_flush) >= inserter.config.flush_interval
   ))
 
-(* Background flush loop (remains the same) *)
+(* Background flush loop *)
 let rec flush_loop inserter =
   if not inserter.running then
     Lwt.return_unit
@@ -213,7 +211,7 @@ let rec flush_loop inserter =
     else
       Lwt.return_unit
 
-(* Timer-based flush loop (remains the same) *)
+(* Timer-based flush loop *)
 let rec timer_flush_loop inserter =
   if not inserter.running then
     Lwt.return_unit
@@ -229,7 +227,7 @@ let rec timer_flush_loop inserter =
     else
       Lwt.return_unit
 
-(* Start the async inserter (remains the same) *)
+(* Start the async inserter *)
 let start inserter =
   if not inserter.running then (
     inserter.running <- true;
@@ -239,7 +237,7 @@ let start inserter =
     logf "Started async inserter for table %s\n%!" inserter.config.table_name
   )
 
-(* Stop the async inserter (remains the same) *)
+(* Stop the async inserter *)
 let stop inserter =
   if inserter.running then (
     inserter.running <- false;
@@ -253,7 +251,7 @@ let stop inserter =
   ) else
     Lwt.return_unit
 
-(* Add a row to the buffer (remains the same) *)
+(* Add a row to the buffer *)
 let add_row ?(columns=[]) inserter (row: value list) =
   Lwt_mutex.with_lock inserter.mutex (fun () ->
     (if inserter.buffer.column_names = None then (
@@ -273,14 +271,14 @@ let add_row ?(columns=[]) inserter (row: value list) =
     Lwt.return_unit
   )
 
-(* Add multiple rows (remains the same) *)
+(* Add multiple rows *)
 let add_rows ?columns inserter rows =
   Lwt_list.iter_s (add_row ?columns inserter) rows
 
-(* Force a flush (remains the same) *)
+(* Force a flush *)
 let flush inserter = flush_buffer inserter
 
-(* Get buffer statistics (remains the same) *)
+(* Get buffer statistics *)
 let get_stats inserter = Lwt_mutex.with_lock inserter.mutex (fun () ->
   Lwt.return (inserter.buffer.row_count, inserter.buffer.byte_size)
 )
