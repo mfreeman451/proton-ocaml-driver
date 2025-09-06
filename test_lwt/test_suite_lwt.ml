@@ -193,7 +193,8 @@ let test_compression_frame_format () =
   
   let () =
     let oc = open_out_bin temp_file in
-    Compress.write_compressed_block oc test_data Compress.LZ4;
+    let writev_fn ss = List.iter (fun s -> output_string oc s) ss; flush oc; Lwt.return_unit in
+    Lwt_main.run (Compress.write_compressed_block_lwt writev_fn test_data Compress.LZ4);
     close_out oc
   in
   
@@ -222,14 +223,16 @@ let test_checksum_verification () =
   (* Write a valid compressed block *)
   let () =
     let oc = open_out_bin temp_file in
-    Compress.write_compressed_block oc test_data Compress.LZ4;
+    let writev_fn ss = List.iter (fun s -> output_string oc s) ss; flush oc; Lwt.return_unit in
+    Lwt_main.run (Compress.write_compressed_block_lwt writev_fn test_data Compress.LZ4);
     close_out oc
   in
   
   (* First, verify that reading works normally *)
   let () =
     let ic = open_in_bin temp_file in
-    let decompressed = Compress.read_compressed_block ic Compress.LZ4 in
+    let read_fn b o l = Lwt.return (input ic b o l) in
+    let decompressed = Lwt_main.run (Connection.read_compressed_block_lwt read_fn) in
     close_in ic;
     Alcotest.(check string) "Valid checksum verification" 
       (Bytes.to_string test_data) (Bytes.to_string decompressed)
@@ -254,12 +257,14 @@ let test_checksum_verification () =
     
     (* Try to read it - should fail with checksum error *)
     let ic = open_in_bin temp_file in
-    let result = try
-      let _ = Compress.read_compressed_block ic Compress.LZ4 in
-      false (* Should not reach here *)
-    with
-    | Compress.Checksum_mismatch _ -> true
-    | _ -> false
+    let result =
+      try
+        let read_fn b o l = Lwt.return (input ic b o l) in
+        let _ = Lwt_main.run (Connection.read_compressed_block_lwt read_fn) in
+        false
+      with
+      | Compress.Compression_error _ -> true
+      | _ -> false
     in
     close_in ic;
     Alcotest.(check bool) "Corrupted checksum detected" true result
@@ -313,12 +318,14 @@ let test_zstd_frame_format () =
   
   (* Write compressed block to file *)
   let oc = open_out_bin temp_file in
-  Compress.write_compressed_block oc test_data Compress.ZSTD;
+  let writev_fn ss = List.iter (fun s -> output_string oc s) ss; flush oc; Lwt.return_unit in
+  Lwt_main.run (Compress.write_compressed_block_lwt writev_fn test_data Compress.ZSTD);
   close_out oc;
   
   (* Read it back *)
   let ic = open_in_bin temp_file in
-  let decompressed = Compress.read_compressed_block ic Compress.ZSTD in
+  let read_fn b o l = Lwt.return (input ic b o l) in
+  let decompressed = Lwt_main.run (Connection.read_compressed_block_lwt read_fn) in
   close_in ic;
   
   Alcotest.(check string) "ZSTD frame format roundtrip" 

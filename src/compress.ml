@@ -1,7 +1,5 @@
 (* LZ4 compression support for ClickHouse/Proton protocol *)
 
-open Binary
-
 exception Compression_error of string
 exception Checksum_mismatch of string
 
@@ -29,18 +27,6 @@ let max_block_size = 1 lsl 20  (* 1MB *)
 
 (* Note: We don't need the compressed_block record type since we handle
    compression frame format directly in read/write functions *)
-
-(* Fast hex formatter for bytes (debug/errors only) *)
-let hex_of_bytes (b:bytes) : string =
-  let len = Bytes.length b in
-  let out = Bytes.create (2 * len) in
-  let hexdig = "0123456789abcdef" in
-  for i = 0 to len - 1 do
-    let v = Char.code (Bytes.get b i) in
-    Bytes.set out (2 * i)     (String.unsafe_get hexdig ((v lsr 4) land 0xF));
-    Bytes.set out (2 * i + 1) (String.unsafe_get hexdig (v land 0xF))
-  done;
-  Bytes.unsafe_to_string out
 
 (* Compress data using LZ4 *)
 let compress_lz4 (data : bytes) : bytes =
