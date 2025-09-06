@@ -115,13 +115,15 @@ let send_native_batch inserter (rows: value list list) (columns: (string * strin
             (* 1. Send the INSERT query, but don't signal end of data. *)
             Connection.send_query_without_data_end inserter.connection insert_sql >>= fun () ->
 
-            (* 2. Send a 0-row header block to declare schema (names/types) *)
-            let header_cols =
-              List.map (fun (name, ty) -> { Block.name = name; type_spec = ty; data = [||] }) columns
+            (* 2. Wait for server-provided header block (schema). *)
+            let rec await_header () =
+              Connection.receive_packet inserter.connection >>= function
+              | PData b when b.n_rows = 0 && b.columns <> [] -> Lwt.return_unit
+              | PProgress | PProfileInfo | PTotals _ | PExtremes _ | PLog _ -> await_header ()
+              | PData _ -> await_header ()
+              | PEndOfStream -> Lwt.fail_with "Unexpected EndOfStream before data header"
             in
-            let header_block = { Block.info = Block_info.{ is_overflows=false; bucket_num = -1 };
-                                 columns = header_cols; n_rows = 0 } in
-            Connection.send_data_block inserter.connection header_block >>= fun () ->
+            await_header () >>= fun () ->
 
             (* 3. Send data blocks (chunked if needed). *)
             let rows_per_block = max 1 (min inserter.config.max_batch_size 100_000) in

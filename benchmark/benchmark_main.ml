@@ -24,6 +24,32 @@ let generate_batch_data count =
   ) in
   Array.to_list rows
 
+(* Helper: verify row count with simple retry to handle eventual visibility *)
+let verify_count client table_name ~expected =
+  let open Lwt.Syntax in
+  let rec loop attempts =
+    let query = sprintf "SELECT to_uint64(count()) FROM %s SETTINGS query_mode='table'" table_name in
+    let* res = Lwt.catch
+      (fun () -> Lwt_unix.with_timeout 5.0 (fun () -> Client.execute client query))
+      (fun _ -> Lwt.return Client.NoRows)
+    in
+    let count = match res with
+      | Client.Rows (rows, _) -> (match rows with
+          | [ [ Columns.VUInt64 n ] ] -> Int64.to_int n
+          | [ [ Columns.VInt64 n ] ] -> Int64.to_int n
+          | [ [ Columns.VInt32 n ] ] -> Int32.to_int n
+          | _ -> -1)
+      | _ -> -1
+    in
+    if count = expected || attempts <= 0 then Lwt.return count
+    else (
+      (* brief backoff before retrying to accommodate stream semantics *)
+      let* () = Lwt_unix.sleep 0.05 in
+      loop (attempts - 1)
+    )
+  in
+  loop 10
+
 (* Benchmark: Async batch insert *)
 let bench_async_batch_insert count =
   let open Lwt.Syntax in
@@ -54,17 +80,8 @@ let bench_async_batch_insert count =
     Client.insert_rows ~columns client table_name rows
   ) in
   
-  (* Verify rows actually inserted *)
-  let verify_sql = sprintf "SELECT to_uint64(count()) FROM %s SETTINGS query_mode='table'" table_name in
-  let* verify_res = Client.execute client verify_sql in
-  let verified = match verify_res with
-    | Client.Rows (rows, _) -> (match rows with
-        | [ [ Columns.VUInt64 n ] ] -> Int64.to_int n
-        | [ [ Columns.VInt64 n ] ] -> Int64.to_int n
-        | [ [ Columns.VInt32 n ] ] -> Int32.to_int n
-        | _ -> -1)
-    | _ -> -1
-  in
+  (* Verify rows actually inserted (poll without forcing table mode) *)
+  let* verified = verify_count client table_name ~expected:count in
   let rate = float_of_int count /. elapsed in
   printf "async-batch: %7d rows | %6.2fs | %8.0f rows/s | verified=%b\n%!"
     count elapsed rate (verified = count);
@@ -111,18 +128,9 @@ let bench_manual_async_insert count batch_size =
     Async_insert.stop inserter
   ) in
   
-  (* Verify rows actually inserted *)
-  let verify_sql = sprintf "SELECT to_uint64(count()) FROM %s SETTINGS query_mode='table'" table_name in
+  (* Verify rows actually inserted (poll) *)
   let* client2 = Lwt.return (Client.create ~host ~port () ) in
-  let* verify_res = Client.execute client2 verify_sql in
-  let verified = match verify_res with
-    | Client.Rows (rows, _) -> (match rows with
-        | [ [ Columns.VUInt64 n ] ] -> Int64.to_int n
-        | [ [ Columns.VInt64 n ] ] -> Int64.to_int n
-        | [ [ Columns.VInt32 n ] ] -> Int32.to_int n
-        | _ -> -1)
-    | _ -> -1
-  in
+  let* verified = verify_count client2 table_name ~expected:count in
   let rate = float_of_int count /. elapsed in
   printf "manual-async: %7d rows (batch=%4d) | %6.2fs | %8.0f rows/s | verified=%b\n%!"
     count batch_size elapsed rate (verified = count);
