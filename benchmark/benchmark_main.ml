@@ -14,30 +14,30 @@ let time_it_lwt name f =
   printf "[%s] %.3f seconds\n%!" name elapsed;
   Lwt.return (result, elapsed)
 
-(* Generate test data *)
-let generate_insert_data count =
-  Array.init count (fun i ->
-    let id = i + 1 in
-    let name = sprintf "User%d" id in
+(* Generate test data as Columns.value lists *)
+let generate_batch_data count =
+  let rows = Array.init count (fun i ->
+    let id = Int32.of_int (i + 1) in
+    let name = sprintf "User%d" (i + 1) in
     let value = Random.float 10000.0 in
-    (id, name, value)
-  )
+    [Columns.VInt32 id; Columns.VString name; Columns.VFloat64 value]
+  ) in
+  Array.to_list rows
 
-(* Benchmark: Insert N rows *)
-let bench_batch_insert count =
+(* Benchmark: Async batch insert *)
+let bench_async_batch_insert count =
   let open Lwt.Syntax in
   let client = Client.create ~host ~port () in
-  let table_name = sprintf "bench_insert_%d" (Random.int 100000) in
+  let table_name = sprintf "bench_async_%d" (Random.int 100000) in
   
-  printf "Setting up table for %d inserts...\n%!" count;
+  printf "Setting up table for %d async batch inserts...\n%!" count;
   let* () = 
     let drop_sql = sprintf "DROP STREAM IF EXISTS %s" table_name in
     let create_sql = sprintf {|
       CREATE STREAM %s (
         id int32,
         name string,
-        value float64,
-        ts datetime64(3)
+        value float64
       )
     |} table_name in
     let* _ = Client.execute client drop_sql in
@@ -45,42 +45,37 @@ let bench_batch_insert count =
     Lwt.return_unit
   in
   
-  let data = generate_insert_data count in
-  printf "Starting %d inserts...\n%!" count;
+  let rows = generate_batch_data count in
+  let columns = [("id", "int32"); ("name", "string"); ("value", "float64")] in
   
-  let* (_, elapsed) = time_it_lwt (sprintf "INSERT_%d_ROWS" count) (fun () ->
-    Lwt_list.iter_s (fun (id, name, value) ->
-      let insert_sql = sprintf 
-        "INSERT INTO %s (id, name, value, ts) SELECT to_int32(%d), '%s', to_float64(%f), now()"
-        table_name id name value
-      in
-      let* _ = Client.execute client insert_sql in
-      Lwt.return_unit
-    ) (Array.to_list data)
+  printf "Starting async batch insert of %d rows...\n%!" count;
+  
+  let* (_, elapsed) = time_it_lwt (sprintf "ASYNC_BATCH_INSERT_%d_ROWS" count) (fun () ->
+    (* Use the high-level async batch insert from Client *)
+    Client.insert_rows ~columns client table_name rows
   ) in
   
   let rate = float_of_int count /. elapsed in
-  printf "✅ %d rows inserted at %.0f rows/second\n\n%!" count rate;
+  printf "✅ %d rows inserted at %.0f rows/second (ASYNC BATCH)\n\n%!" count rate;
   
   let* _ = Client.execute client (sprintf "DROP STREAM IF EXISTS %s" table_name) in
   Lwt.return rate
 
-(* Benchmark: Read N rows using streaming *)
-let bench_streaming_read count =
+(* Benchmark: Manual async insert with custom config *)
+let bench_manual_async_insert count batch_size =
   let open Lwt.Syntax in
-  let client = Client.create ~host ~port () in
-  let table_name = sprintf "bench_read_%d" (Random.int 100000) in
+  let conn = Connection.create ~host ~port () in
+  let table_name = sprintf "bench_manual_%d" (Random.int 100000) in
   
-  printf "Setting up table for %d row read test...\n%!" count;
-  (* Setup test data *)
+  printf "Setting up table for %d manual async inserts (batch size: %d)...\n%!" count batch_size;
+  let client = Client.create ~host ~port () in
   let* () = 
     let drop_sql = sprintf "DROP STREAM IF EXISTS %s" table_name in
     let create_sql = sprintf {|
       CREATE STREAM %s (
         id int32,
         name string,
-        value float64,
-        ts datetime64(3)
+        value float64
       )
     |} table_name in
     let* _ = Client.execute client drop_sql in
@@ -88,103 +83,173 @@ let bench_streaming_read count =
     Lwt.return_unit
   in
   
-  (* Insert test data *)
-  printf "Inserting %d rows for read test...\n%!" count;
-  let data = generate_insert_data count in
+  let rows = generate_batch_data count in
+  let columns = [("id", "int32"); ("name", "string"); ("value", "float64")] in
+  
+  (* Create custom config for smaller batches *)
+  let config = { (Async_insert.default_config table_name) with 
+    max_batch_size = batch_size;
+    flush_interval = 1.0;  (* Flush every 1 second *)
+  } in
+  
+  printf "Starting manual async insert of %d rows (batch size: %d)...\n%!" count batch_size;
+  
+  let* (_, elapsed) = time_it_lwt (sprintf "MANUAL_ASYNC_%d_BATCH_%d" count batch_size) (fun () ->
+    let inserter = Async_insert.create config conn in
+    Async_insert.start inserter;
+    let* () = Async_insert.add_rows ~columns inserter rows in
+    Async_insert.stop inserter
+  ) in
+  
+  let rate = float_of_int count /. elapsed in
+  printf "✅ %d rows inserted at %.0f rows/second (MANUAL ASYNC, batch=%d)\n\n%!" count rate batch_size;
+  
+  let* () = Connection.disconnect conn in
+  Lwt.return rate
+
+(* Benchmark: Streaming read with live data injection *)
+let bench_live_streaming_read count =
+  let open Lwt.Syntax in
+  let client = Client.create ~host ~port () in
+  let table_name = sprintf "bench_stream_%d" (Random.int 100000) in
+  
+  printf "Setting up streaming table for %d row live read test...\n%!" count;
+  (* Setup test table *)
   let* () = 
-    Lwt_list.iter_s (fun (id, name, value) ->
-      let insert_sql = sprintf 
-        "INSERT INTO %s (id, name, value, ts) SELECT to_int32(%d), '%s', to_float64(%f), now()"
-        table_name id name value
-      in
-      let* _ = Client.execute client insert_sql in
-      Lwt.return_unit
-    ) (Array.to_list data)
+    let drop_sql = sprintf "DROP STREAM IF EXISTS %s" table_name in
+    let create_sql = sprintf {|
+      CREATE STREAM %s (
+        id int32,
+        name string,
+        value float64
+      )
+    |} table_name in
+    let* _ = Client.execute client drop_sql in
+    let* _ = Client.execute client create_sql in
+    Lwt.return_unit
   in
   
-  (* Give data time to be available *)
-  let* () = Lwt_unix.sleep 0.1 in
+  printf "Starting live streaming read (will inject %d rows)...\n%!" count;
   
-  printf "Starting streaming read of %d rows...\n%!" count;
-  (* Now benchmark the read via streaming *)
+  (* Start streaming connection FIRST *)
   let conn = Connection.create ~host ~port ~compression:Compress.None () in
-  let query = sprintf "SELECT id, name, value, ts FROM %s" table_name in
+  let query = sprintf "SELECT id, name, value FROM %s" table_name in
+  let* () = Connection.send_query conn query in
   
-  let* (rows_read, elapsed) = time_it_lwt (sprintf "STREAM_READ_%d_ROWS" count) (fun () ->
-    let* () = Connection.send_query conn query in
+  let* (rows_read, elapsed) = time_it_lwt (sprintf "LIVE_STREAM_READ_%d_ROWS" count) (fun () ->
+    (* Start data injection in parallel with reading *)
+    let inject_data () = 
+      let rows = generate_batch_data count in
+      let columns = [("id", "int32"); ("name", "string"); ("value", "float64")] in
+      printf "  [INJECTOR] Starting to inject %d rows...\n%!" count;
+      Client.insert_rows ~columns client table_name rows
+    in
     
-    let rec read_rows acc_count attempts max_attempts =
-      if acc_count >= count || attempts >= max_attempts then
+    (* Start data injection asynchronously *)
+    let inject_promise = inject_data () in
+    
+    (* Read streaming data *)
+    let rec read_rows acc_count =
+      if acc_count >= count then begin
+        printf "  [READER] Got all %d rows!\n%!" count;
         Lwt.return acc_count
-      else
+      end else
         let open Lwt.Infix in
         Lwt.catch
           (fun () ->
-            Lwt_unix.with_timeout 1.0 (fun () -> Connection.receive_packet conn) >>= function
+            Lwt_unix.with_timeout 2.0 (fun () -> Connection.receive_packet conn) >>= function
             | Connection.PData block ->
                 let rows = Block.get_rows block in
                 let row_count = List.length rows in
                 if row_count > 0 then
-                  printf "  received batch: %d rows\n%!" row_count;
-                read_rows (acc_count + row_count) 0 max_attempts
+                  printf "  [READER] received batch: %d rows (total: %d/%d)\n%!" row_count (acc_count + row_count) count;
+                read_rows (acc_count + row_count)
             | Connection.PEndOfStream ->
-                printf "  stream ended\n%!";
+                printf "  [READER] stream ended with %d rows\n%!" acc_count;
                 Lwt.return acc_count
-            | _ -> read_rows acc_count (attempts + 1) max_attempts)
-          (fun _ -> read_rows acc_count (attempts + 1) max_attempts)
+            | _ -> read_rows acc_count)
+          (fun ex ->
+            printf "  [READER] timeout or error after %d rows: %s\n%!" acc_count (Printexc.to_string ex);
+            Lwt.return acc_count)
     in
     
-    read_rows 0 0 20
+    (* Wait for both injection and reading *)
+    let* final_count = read_rows 0 in
+    let* () = inject_promise in
+    printf "  [INJECTOR] Completed data injection\n%!";
+    Lwt.return final_count
   ) in
   
   let rate = float_of_int rows_read /. elapsed in
-  printf "✅ %d rows read at %.0f rows/second\n\n%!" rows_read rate;
+  printf "✅ %d rows read at %.0f rows/second (LIVE STREAMING)\n\n%!" rows_read rate;
   
   let* () = Connection.disconnect conn in
   let* _ = Client.execute client (sprintf "DROP STREAM IF EXISTS %s" table_name) in
   Lwt.return rate
 
-let run_performance_tests sizes =
+let run_insert_benchmarks sizes =
   let open Lwt.Syntax in
-  printf "\n=== INSERT PERFORMANCE TESTS ===\n\n%!";
+  printf "\n=== ASYNC BATCH INSERT BENCHMARKS ===\n\n%!";
   
-  let* insert_rates = 
+  let* async_rates = 
     Lwt_list.map_s (fun size ->
-      let* rate = bench_batch_insert size in
+      let* rate = bench_async_batch_insert size in
       Lwt.return (size, rate)
     ) sizes
   in
   
-  printf "=== READ PERFORMANCE TESTS ===\n\n%!";
+  printf "\n=== MANUAL ASYNC INSERT BENCHMARKS (different batch sizes) ===\n\n%!";
   
-  let* read_rates = 
+  (* Test different batch sizes for 10K rows *)
+  let test_size = 10000 in
+  let batch_sizes = [100; 500; 1000; 5000] in
+  let* manual_rates = 
+    Lwt_list.map_s (fun batch_size ->
+      let* rate = bench_manual_async_insert test_size batch_size in
+      Lwt.return (batch_size, rate)
+    ) batch_sizes
+  in
+  
+  printf "=== INSERT PERFORMANCE SUMMARY ===\n\n%!";
+  printf "Async Batch Insert Performance:\n%!";
+  List.iter (fun (size, rate) ->
+    printf "  %7d rows: %10.0f rows/sec\n%!" size rate
+  ) async_rates;
+  
+  printf "\nManual Async Insert Performance (10K rows):\n%!";
+  List.iter (fun (batch_size, rate) ->
+    printf "  batch %4d: %10.0f rows/sec\n%!" batch_size rate
+  ) manual_rates;
+  
+  Lwt.return_unit
+
+let run_streaming_benchmarks sizes =
+  let open Lwt.Syntax in
+  printf "\n=== LIVE STREAMING READ BENCHMARKS ===\n\n%!";
+  
+  let* streaming_rates = 
     Lwt_list.map_s (fun size ->
-      let* rate = bench_streaming_read size in
+      let* rate = bench_live_streaming_read size in
       Lwt.return (size, rate)
     ) sizes
   in
   
-  printf "=== PERFORMANCE SUMMARY ===\n\n%!";
-  printf "Insert Performance:\n%!";
+  printf "=== STREAMING READ PERFORMANCE SUMMARY ===\n\n%!";
+  printf "Live Streaming Read Performance:\n%!";
   List.iter (fun (size, rate) ->
-    printf "  %6d rows: %8.0f rows/sec\n%!" size rate
-  ) insert_rates;
-  
-  printf "\nRead Performance:\n%!";
-  List.iter (fun (size, rate) ->
-    printf "  %6d rows: %8.0f rows/sec\n%!" size rate
-  ) read_rates;
+    printf "  %7d rows: %10.0f rows/sec\n%!" size rate
+  ) streaming_rates;
   
   Lwt.return_unit
 
 let test_million_rows () =
   let open Lwt.Syntax in
-  printf "\n=== 1 MILLION ROW CHALLENGE ===\n\n%!";
+  printf "\n=== 🚀 1 MILLION ROW CHALLENGE 🚀 ===\n\n%!";
   
-  printf "Testing 1M row insert performance...\n%!";
-  let* insert_rate = bench_batch_insert 1_000_000 in
+  printf "Testing 1M row async batch insert performance...\n%!";
+  let* insert_rate = bench_async_batch_insert 1_000_000 in
   
-  printf "1M Insert Results:\n%!";
+  printf "1M Async Insert Results:\n%!";
   printf "  Rate: %.0f rows/second\n%!" insert_rate;
   printf "  Time: %.2f minutes\n%!" (1_000_000.0 /. insert_rate /. 60.0);
   
@@ -193,7 +258,7 @@ let test_million_rows () =
 let run_benchmarks () =
   let open Lwt.Syntax in
   Random.self_init ();
-  printf "=== 🚀 Proton OCaml Driver Performance Benchmarks 🚀 ===\n\n%!";
+  printf "=== 🚀 Proton OCaml Driver ASYNC Performance Benchmarks 🚀 ===\n\n%!";
   
   printf "Testing connection to %s:%d...\n%!" host port;
   let* () = 
@@ -209,14 +274,23 @@ let run_benchmarks () =
     )
   in
   
-  (* Test with progressively larger datasets *)
-  let test_sizes = [100; 1000; 10000; 50000] in
-  let* () = run_performance_tests test_sizes in
+  (* Test with various sizes *)
+  let test_sizes = [1000; 10000; 50000] in
+  let streaming_sizes = [1000; 5000; 10000] in
+  
+  let* () = run_insert_benchmarks test_sizes in
+  let* () = run_streaming_benchmarks streaming_sizes in
   
   (* Million row challenge *)
   let* () = test_million_rows () in
   
-  printf "\n🎉 All benchmarks completed!\n%!";
+  printf "\n🎉 All async benchmarks completed!\n%!";
+  printf "\nKey Takeaways:\n%!";
+  printf "- Async batch inserts should show much higher throughput\n%!";
+  printf "- Different batch sizes affect performance\n%!";
+  printf "- Live streaming demonstrates real-time data capture\n%!";
+  printf "- 1M row test shows scalability limits\n\n%!";
+  
   Lwt.return_unit
 
 let () = Lwt_main.run (run_benchmarks ())

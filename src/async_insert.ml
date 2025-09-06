@@ -85,58 +85,61 @@ let send_batch inserter (rows: value list list) (columns: (string * string) list
     else
       Lwt.catch
         (fun () ->
-          (* Send INSERT query first to prepare for data *)
-          let insert_query = Printf.sprintf "INSERT INTO %s VALUES" inserter.config.table_name in
-          Connection.send_query inserter.connection insert_query >>= fun () ->
+          (* Send INSERT query (native protocol) without prematurely sending end-of-data. *)
+          let insert_query =
+            match columns with
+            | [] -> Printf.sprintf "INSERT INTO %s" inserter.config.table_name
+            | cols ->
+                let names = cols |> List.map fst |> String.concat ", " in
+                Printf.sprintf "INSERT INTO %s (%s)" inserter.config.table_name names
+          in
+          Connection.send_query_without_data_end inserter.connection insert_query >>= fun () ->
+
+          (* Create data block from our rows *)
+          let n_rows = List.length rows in
+          let n_cols = List.length columns in
           
-          (* Read the first block (should be a header block with column info) *)
-          Connection.receive_packet inserter.connection >>= function
-          | PData _header_block ->
-              (* Create data block from our rows *)
-              let n_rows = List.length rows in
-              let n_cols = List.length columns in
-              
-              (* Convert rows to column-oriented data *)
-              let column_data = Array.make n_cols [||] in
-              List.iteri (fun col_idx (_, _) ->
-                let col_values = Array.make n_rows (VString "") in
-                List.iteri (fun row_idx row ->
-                  if col_idx < List.length row then
-                    col_values.(row_idx) <- List.nth row col_idx
-                ) rows;
-                column_data.(col_idx) <- col_values
-              ) columns;
-              
-              (* Build block columns *)
-              let block_columns = List.mapi (fun i (name, type_spec) ->
-                { Block.name; type_spec; data = column_data.(i) }
-              ) columns in
-              
-              let data_block = {
-                Block.info = { Block_info.is_overflows = false; bucket_num = -1 };
-                columns = block_columns;
-                n_rows = n_rows;
-              } in
-              
-              (* Send the data block *)
-              Connection.send_data_block inserter.connection data_block >>= fun () ->
-              
-              (* Send empty block to signal end *)
-              let empty_block = {
-                Block.info = { Block_info.is_overflows = false; bucket_num = -1 };
-                columns = [];
-                n_rows = 0;
-              } in
-              Connection.send_data_block inserter.connection empty_block >>= fun () ->
-              
-              (* Read response packets until end of stream *)
-              let rec read_response () =
-                Connection.receive_packet inserter.connection >>= function
-                | PEndOfStream -> Lwt.return_unit
-                | _ -> read_response ()
-              in
-              read_response ()
-          | _ -> Lwt.fail_with "Expected header block after INSERT query")
+          (* Convert rows to column-oriented data *)
+          let column_data = Array.make n_cols [||] in
+          List.iteri (fun col_idx (_, _) ->
+            let col_values = Array.make n_rows (VString "") in
+            List.iteri (fun row_idx row ->
+              if col_idx < List.length row then
+                col_values.(row_idx) <- List.nth row col_idx
+            ) rows;
+            column_data.(col_idx) <- col_values
+          ) columns;
+          
+          (* Build block columns *)
+          let block_columns = List.mapi (fun i (name, type_spec) ->
+            { Block.name; type_spec; data = column_data.(i) }
+          ) columns in
+          
+          let data_block = {
+            Block.info = { Block_info.is_overflows = false; bucket_num = -1 };
+            columns = block_columns;
+            n_rows = n_rows;
+          } in
+          
+          (* Send the data block *)
+          Connection.send_data_block inserter.connection data_block >>= fun () ->
+          
+          (* Send empty block to signal end of data stream for this INSERT *)
+          let empty_block = {
+            Block.info = { Block_info.is_overflows = false; bucket_num = -1 };
+            columns = [];
+            n_rows = 0;
+          } in
+          Connection.send_data_block inserter.connection empty_block >>= fun () ->
+          
+          (* Read response packets until end of stream *)
+          let rec read_response () =
+            Connection.receive_packet inserter.connection >>= function
+            | PEndOfStream -> Lwt.return_unit
+            | _ -> read_response ()
+          in
+          read_response ()
+        )
         (fun exn ->
           Printf.printf "Insert attempt %d failed: %s\n" attempt (Printexc.to_string exn);
           let delay = inserter.config.retry_delay *. (float_of_int attempt) in
