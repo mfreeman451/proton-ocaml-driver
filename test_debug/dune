@@ -1,0 +1,4 @@
+(executable
+ (public_name test_debug)
+ (name test_debug)
+ (libraries proton lwt lwt.unix))
