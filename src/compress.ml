@@ -70,37 +70,33 @@ let build_compressed_frame (data : bytes) (method_ : method_t) : bytes =
       let uncompressed_size = Bytes.length data in
       let compressed_data = compress_lz4 data in
       let compressed_size = Bytes.length compressed_data in
-      let header = Bytes.create compress_header_size in
-      Bytes.set header 0 (Char.chr (method_to_byte LZ4));
-      bytes_set_int32_le header 1 (Int32.of_int (compressed_size + compress_header_size));
-      bytes_set_int32_le header 5 (Int32.of_int uncompressed_size);
-      let checksum_input = Bytes.create (compress_header_size + compressed_size) in
-      Bytes.blit header 0 checksum_input 0 compress_header_size;
-      Bytes.blit compressed_data 0 checksum_input compress_header_size compressed_size;
-      let hash = Cityhash.cityhash128 checksum_input in
-      let checksum = Cityhash.to_bytes hash in
       let frame = Bytes.create (checksum_size + compress_header_size + compressed_size) in
-      Bytes.blit checksum 0 frame 0 checksum_size;
-      Bytes.blit header 0 frame checksum_size compress_header_size;
+      (* Write header directly into frame *)
+      Bytes.set frame checksum_size (Char.chr (method_to_byte LZ4));
+      bytes_set_int32_le frame (checksum_size + 1) (Int32.of_int (compressed_size + compress_header_size));
+      bytes_set_int32_le frame (checksum_size + 5) (Int32.of_int uncompressed_size);
+      (* Write payload directly into frame *)
       Bytes.blit compressed_data 0 frame (checksum_size + compress_header_size) compressed_size;
+      (* Hash header+payload slice and write checksum at start *)
+      let hash = Cityhash.cityhash128_sub frame checksum_size (compress_header_size + compressed_size) in
+      let checksum = Cityhash.to_bytes hash in
+      Bytes.blit checksum 0 frame 0 checksum_size;
       frame
   | ZSTD ->
       let uncompressed_size = Bytes.length data in
       let compressed_data = compress_zstd data in
       let compressed_size = Bytes.length compressed_data in
-      let header = Bytes.create compress_header_size in
-      Bytes.set header 0 (Char.chr (method_to_byte ZSTD));
-      bytes_set_int32_le header 1 (Int32.of_int (compressed_size + compress_header_size));
-      bytes_set_int32_le header 5 (Int32.of_int uncompressed_size);
-      let checksum_input = Bytes.create (compress_header_size + compressed_size) in
-      Bytes.blit header 0 checksum_input 0 compress_header_size;
-      Bytes.blit compressed_data 0 checksum_input compress_header_size compressed_size;
-      let hash = Cityhash.cityhash128 checksum_input in
-      let checksum = Cityhash.to_bytes hash in
       let frame = Bytes.create (checksum_size + compress_header_size + compressed_size) in
-      Bytes.blit checksum 0 frame 0 checksum_size;
-      Bytes.blit header 0 frame checksum_size compress_header_size;
+      (* Write header directly into frame *)
+      Bytes.set frame checksum_size (Char.chr (method_to_byte ZSTD));
+      bytes_set_int32_le frame (checksum_size + 1) (Int32.of_int (compressed_size + compress_header_size));
+      bytes_set_int32_le frame (checksum_size + 5) (Int32.of_int uncompressed_size);
+      (* Write payload directly into frame *)
       Bytes.blit compressed_data 0 frame (checksum_size + compress_header_size) compressed_size;
+      (* Hash header+payload slice and write checksum at start *)
+      let hash = Cityhash.cityhash128_sub frame checksum_size (compress_header_size + compressed_size) in
+      let checksum = Cityhash.to_bytes hash in
+      Bytes.blit checksum 0 frame 0 checksum_size;
       frame
 
 (* Write a compressed block to output channel *)
@@ -187,11 +183,7 @@ let read_compressed_block ic (method_ : method_t) : bytes =
       let compressed_data = really_input_string ic compressed_data_size |> Bytes.of_string in
       
       (* Verify checksum *)
-      let checksum_input = Bytes.create (compress_header_size + compressed_data_size) in
-      Bytes.blit header checksum_size checksum_input 0 compress_header_size;
-      Bytes.blit compressed_data 0 checksum_input compress_header_size compressed_data_size;
-      
-      let calculated_hash = Cityhash.cityhash128 checksum_input in
+      let calculated_hash = Cityhash.cityhash128_2sub header checksum_size compress_header_size compressed_data 0 compressed_data_size in
       let calculated_checksum = Cityhash.to_bytes calculated_hash in
       
       let received_checksum = Bytes.sub header 0 checksum_size in
@@ -222,11 +214,7 @@ let read_compressed_block ic (method_ : method_t) : bytes =
       let compressed_data = really_input_string ic compressed_data_size |> Bytes.of_string in
       
       (* Verify checksum *)
-      let checksum_input = Bytes.create (compress_header_size + compressed_data_size) in
-      Bytes.blit header checksum_size checksum_input 0 compress_header_size;
-      Bytes.blit compressed_data 0 checksum_input compress_header_size compressed_data_size;
-      
-      let calculated_hash = Cityhash.cityhash128 checksum_input in
+      let calculated_hash = Cityhash.cityhash128_2sub header checksum_size compress_header_size compressed_data 0 compressed_data_size in
       let calculated_checksum = Cityhash.to_bytes calculated_hash in
       
       let received_checksum = Bytes.sub header 0 checksum_size in
