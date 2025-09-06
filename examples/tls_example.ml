@@ -1,7 +1,7 @@
 (* TLS Example for Proton OCaml Driver *)
 
 open Proton
-open Lwt.Infix
+open Lwt.Syntax
 
 let tls_secure_example () =
   (* Example: Create a secure TLS connection with system CA trust *)
@@ -92,9 +92,9 @@ let insecure_dev_example () =
 
 let () =
   Lwt_main.run (
-    tls_secure_example () >>= fun () ->
-    mtls_example () >>= fun () ->
-    insecure_dev_example () >>= fun () ->
+    let* () = tls_secure_example () in
+    let* () = mtls_example () in
+    let* () = insecure_dev_example () in
     Printf.printf "\n✅ TLS examples completed successfully!\n";
     Lwt.return_unit
   )

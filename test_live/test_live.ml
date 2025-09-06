@@ -113,11 +113,11 @@ module DataTypeTests = struct
     (* For STREAMs, avoid VALUES; use INSERT ... SELECT to ensure parser compatibility. *)
     let open Lwt.Syntax in
     let exec ~label sql =
-      let open Lwt.Infix in
       Lwt.catch
         (fun () ->
-           Lwt_unix.with_timeout 5.0 (fun () -> Client.execute client sql) >|= fun _ ->
-           Printf.printf "[INSERT] ok: %s\n%!" label)
+           let* _ = Lwt_unix.with_timeout 5.0 (fun () -> Client.execute client sql) in
+           Printf.printf "[INSERT] ok: %s\n%!" label;
+           Lwt.return_unit)
         (fun ex ->
            Printf.printf "[INSERT] failed (%s): %s\n%!" label (Printexc.to_string ex);
            Lwt.fail ex)
@@ -146,8 +146,8 @@ module DataTypeTests = struct
     printf "[DEBUG] Query sent, waiting for response...\n%!";
     
     let rec collect_results acc_rows col_info =
-      let open Lwt.Infix in
-      Connection.receive_packet conn >>= function
+      let* pkt = Connection.receive_packet conn in
+      match pkt with
       | Connection.PData block ->
           let rows = Block.get_rows block in
           printf "[DEBUG] Received data block with %d rows\n%!" (List.length rows);
@@ -221,13 +221,11 @@ module DataTypeTests = struct
       printf "[DEBUG] Re-inserting data for streaming capture...\n%!";
       let client = Client.create ~host:"127.0.0.1" ~port:8463 () in
       let* () = 
-        let open Lwt.Syntax in
         let insert_one id = 
           let insert = sprintf "INSERT INTO %s (id, name, age, balance, bignum, created) SELECT to_int32(%d), 'Stream%d', to_uint32(%d), to_float64(%f), to_int64(%Ld), now()"
             table_name id id (20 + id) (1000.0 +. float_of_int id) (Int64.of_int (1000000 + id))
         in
-        Client.execute client insert
-        in
+        let* _ = Client.execute client insert in
         let* _ = insert_one 101 in
         let* _ = insert_one 102 in
         let* _ = insert_one 103 in
@@ -271,10 +269,10 @@ module DataTypeTests = struct
             _column_types = types;
           }
         end else
-          let open Lwt.Infix in
           Lwt.catch
             (fun () ->
-              Lwt_unix.with_timeout 0.5 (fun () -> Connection.receive_packet conn2) >>= function
+              let* pkt = Lwt_unix.with_timeout 0.5 (fun () -> Connection.receive_packet conn2) in
+              match pkt with
               | Connection.PData block ->
                   let rows = Block.get_rows block in
                   let num_rows = List.length rows in
@@ -357,10 +355,10 @@ module DataTypeTests = struct
           _column_types = types;
         }
       end else
-        let open Lwt.Infix in
         Lwt.catch
           (fun () ->
-            Lwt_unix.with_timeout 1.0 (fun () -> Connection.receive_packet conn) >>= function
+            let* pkt = Lwt_unix.with_timeout 1.0 (fun () -> Connection.receive_packet conn) in
+            match pkt with
             | Connection.PData block ->
                 let rows = Block.get_rows block in
                 let num_rows = List.length rows in
@@ -431,9 +429,9 @@ let run_live_tests () =
     let* _ = 
       Lwt.catch
         (fun () ->
-          let open Lwt.Infix in
-          Lwt_unix.with_timeout 2.0 (fun () -> Client.execute client count_query) >|= fun _ ->
-          printf "[VERIFY] Count query completed\n%!")
+          let* _ = Lwt_unix.with_timeout 2.0 (fun () -> Client.execute client count_query) in
+          printf "[VERIFY] Count query completed\n%!";
+          Lwt.return_unit)
         (fun ex ->
           printf "[VERIFY] Count query failed/timed out: %s\n%!" (Printexc.to_string ex);
           Lwt.return_unit)
@@ -525,19 +523,19 @@ let run_live_tests () =
       let rec loop () =
         if !stop_signal then Lwt.return_unit
         else
-          let open Lwt.Infix in
           Lwt.pick [
-            (Connection.receive_packet conn3 >>= function
-              | Connection.PData block ->
-                  let rows = Block.get_rows block in
-                  List.iter (fun row ->
-                    incr rows_received;
-                    let formatted = String.concat " | " (List.map Columns.value_to_string row) in
-                    printf "  [STREAM %04d] %s\n%!" !rows_received formatted
-                  ) rows;
-                  loop ()
-              | _ -> loop ());
-            (Lwt_unix.sleep 0.1 >>= fun () -> loop ())
+            (let* pkt = Connection.receive_packet conn3 in
+             match pkt with
+             | Connection.PData block ->
+                 let rows = Block.get_rows block in
+                 List.iter (fun row ->
+                   incr rows_received;
+                   let formatted = String.concat " | " (List.map Columns.value_to_string row) in
+                   printf "  [STREAM %04d] %s\n%!" !rows_received formatted
+                 ) rows;
+                 loop ()
+             | _ -> loop ());
+            (let* () = Lwt_unix.sleep 0.1 in loop ())
           ]
       in
       Lwt.catch loop (fun _ -> Lwt.return_unit)
@@ -551,18 +549,16 @@ let run_live_tests () =
           let value = Random.float 1000.0 in
           let message = sprintf "msg_%04d" (Random.int 10000) in
           let insert = sprintf "INSERT INTO %s (id, value, message) SELECT to_int32(%d), to_float64(%f), '%s'" stream_table id value message in
-          let open Lwt.Infix in
-          Client.execute client insert >>= fun _ ->
+          let* _ = Client.execute client insert in
           printf "  [INSERT] id=%d, value=%.2f, message=%s\n%!" id value message;
-          Lwt_unix.sleep 0.5 >>= fun () ->
+          let* () = Lwt_unix.sleep 0.5 in
           loop (count + 1)
       in
       loop 0
     in
     
     let timeout_task = 
-      let open Lwt.Infix in
-      Lwt_unix.sleep 5.0 >>= fun () ->
+      let* () = Lwt_unix.sleep 5.0 in
       stop_signal := true;
       Lwt.return_unit
     in

@@ -1,3 +1,4 @@
 (test
  (name test_suite_lwt)
- (libraries proton alcotest))
+ (libraries proton alcotest)
+ (preprocess (pps lwt_ppx)))

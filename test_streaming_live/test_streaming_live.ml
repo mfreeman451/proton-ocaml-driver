@@ -31,9 +31,9 @@ let run () =
     let* () = Connection.send_query conn query in
     printf "[live] Reader subscribed, streaming rows... (Ctrl-C to stop)\n%!";
 
-    let open Lwt.Infix in
     let rec reader_loop () =
-      Connection.receive_packet conn >>= function
+      let* pkt = Connection.receive_packet conn in
+      match pkt with
       | Connection.PData b ->
           let rows = Block.get_rows b in
           List.iter (fun row ->
@@ -44,7 +44,8 @@ let run () =
       | Connection.PEndOfStream ->
           (* For unbounded streams we don't expect this, but just resubscribe. *)
           printf "[live] end-of-stream, resubscribing...\n%!";
-          Connection.send_query conn query >>= reader_loop
+          let* () = Connection.send_query conn query in
+          reader_loop ()
       | _ -> reader_loop ()
     in
 
@@ -53,13 +54,18 @@ let run () =
       let id = Random.int 1_000_000 in
       let name = random_name () in
       let sql = Printf.sprintf "INSERT INTO %s (id, name) SELECT to_int32(%d), '%s'" stream id name in
-      Lwt.catch
-        (fun () -> Client.execute client sql >|= fun _ -> printf "[live] insert: (%d, %s)\n%!" id name)
-        (fun ex ->
-          printf "[live] insert error: %s\n%!" (Printexc.to_string ex);
-          Lwt.return_unit
-        ) >>= fun () ->
-      Lwt_unix.sleep 0.5 >>= inserter_loop
+      let* () =
+        Lwt.catch
+          (fun () ->
+            let* _ = Client.execute client sql in
+            printf "[live] insert: (%d, %s)\n%!" id name;
+            Lwt.return_unit)
+          (fun ex ->
+            printf "[live] insert error: %s\n%!" (Printexc.to_string ex);
+            Lwt.return_unit)
+      in
+      let* () = Lwt_unix.sleep 0.5 in
+      inserter_loop ()
     in
 
     (* SIGINT -> stop *)
@@ -82,4 +88,3 @@ let run () =
 let () =
   try run () with
   | e -> Printf.printf "❌ Exception: %s\n%!" (Printexc.to_string e)
-

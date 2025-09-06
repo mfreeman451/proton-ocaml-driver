@@ -37,15 +37,14 @@ let run () =
     printf "[insert_verify] Created %s\n%!" (if !ddl_mode_stream then "stream" else "table");
     (* Skip DESCRIBE for simplicity in streaming demo *)
     (* Unbounded stream read: start reader, then perform inserts so reader catches them. *)
-    let open Proton in
     let conn = Connection.create ~host:"127.0.0.1" ~port:8463 ~settings () in
     let query = Printf.sprintf "SELECT id, name FROM %s" table in
     let printed = ref 0 in
-    let open Lwt.Infix in
     let* () = Connection.send_query conn query in
     let rec loop () =
       if !printed >= 3 then Lwt.return_unit else
-      Connection.receive_packet conn >>= function
+      let* pkt = Connection.receive_packet conn in
+      match pkt with
       | Connection.PData b ->
           let rows = Block.get_rows b in
           List.iter (fun row -> if !printed < 3 then (
@@ -66,7 +65,8 @@ let run () =
         Client.execute client (sprintf "INSERT INTO %s (id, name) SELECT to_int32(3), 'three'" table)
       ) else Client.execute client insert in
     printf "[insert_verify] Inserted 3 rows (%s mode)\n%!" (if !ddl_mode_stream then "stream" else "table");
-    let* _ = Lwt.pick [ reader_task; (Lwt_unix.sleep 5.0 >|= fun () -> ()) ] in
+    let sleep_done = let+ () = Lwt_unix.sleep 5.0 in () in
+    let* _ = Lwt.pick [ reader_task; sleep_done ] in
     printf "[insert_verify] Printed %d row(s) from live stream\n%!" !printed;
     let* () = Connection.disconnect conn in
     if !printed = 0 then printf "[insert_verify] No rows observed from table(%s) within 3s\n%!" table;

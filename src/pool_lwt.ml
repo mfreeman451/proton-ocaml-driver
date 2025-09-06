@@ -1,4 +1,4 @@
-open Lwt.Infix
+open Lwt.Syntax
 
 type pool_config = {
   max_open: int;
@@ -38,52 +38,61 @@ let create_pool ?(config=default_pool_config) create_fn = {
 }
 
 let rec get_connection pool : Connection.t Lwt.t =
-  Lwt_mutex.with_lock pool.mutex (fun () ->
-    match pool.idle with
-    | c::rest -> pool.idle <- rest; Lwt.return (`Conn c.conn)
-    | [] ->
-        if pool.total_count < pool.config.max_open then (
-          let conn = pool.create_connection () in
-          pool.total_count <- pool.total_count + 1;
-          Lwt.return (`Conn conn)
-        ) else (
-          Lwt_condition.wait ~mutex:pool.mutex pool.cond >|= fun () -> `Wait
-        )
-  ) >>= function
+  let* r =
+    Lwt_mutex.with_lock pool.mutex (fun () ->
+      match pool.idle with
+      | c :: rest -> pool.idle <- rest; Lwt.return (`Conn c.conn)
+      | [] ->
+          if pool.total_count < pool.config.max_open then (
+            let conn = pool.create_connection () in
+            pool.total_count <- pool.total_count + 1;
+            Lwt.return (`Conn conn)
+          ) else (
+            let+ () = Lwt_condition.wait ~mutex:pool.mutex pool.cond in
+            `Wait
+          )
+    )
+  in
+  match r with
   | `Conn c -> Lwt.return c
   | `Wait -> get_connection pool
 
 let return_connection pool (conn:Connection.t) : unit Lwt.t =
   Lwt_mutex.with_lock pool.mutex (fun () ->
-    if List.length pool.idle < pool.config.max_idle then (
-      pool.idle <- { conn; last_used = now (); created = now () } :: pool.idle;
-      Lwt_condition.signal pool.cond (); Lwt.return_unit
-    ) else (
-      pool.total_count <- pool.total_count - 1;
-      Connection.disconnect conn
-    )
-  )
+      if List.length pool.idle < pool.config.max_idle then (
+        pool.idle <- { conn; last_used = now (); created = now () } :: pool.idle;
+        Lwt_condition.signal pool.cond (); Lwt.return_unit
+      ) else (
+        pool.total_count <- pool.total_count - 1;
+        Connection.disconnect conn
+      ))
 
 let with_connection pool (f:Connection.t -> 'a Lwt.t) : 'a Lwt.t =
-  get_connection pool >>= fun conn ->
+  let* conn = get_connection pool in
   Lwt.finalize
     (fun () -> f conn)
     (fun () -> return_connection pool conn)
 
 let rec cleanup_loop pool period : unit Lwt.t =
-  if pool.cleanup_stopper then Lwt.return_unit else
-  Lwt_unix.sleep period >>= fun () ->
-  let cutoff_idle = now () -. pool.config.idle_timeout in
-  let cutoff_create = now () -. pool.config.max_lifetime in
-  Lwt_mutex.with_lock pool.mutex (fun () ->
-    let keep, drop = List.partition (fun pc -> pc.last_used >= cutoff_idle && pc.created >= cutoff_create) pool.idle in
-    pool.idle <- keep;
-    let to_close = List.length drop in
-    pool.total_count <- pool.total_count - to_close;
-    Lwt.return drop
-  ) >>= fun drop_list ->
-  Lwt_list.iter_s (fun pc -> Connection.disconnect pc.conn) drop_list >>= fun () ->
-  cleanup_loop pool period
+  if pool.cleanup_stopper then Lwt.return_unit
+  else
+    let* () = Lwt_unix.sleep period in
+    let cutoff_idle = now () -. pool.config.idle_timeout in
+    let cutoff_create = now () -. pool.config.max_lifetime in
+    let* drop_list =
+      Lwt_mutex.with_lock pool.mutex (fun () ->
+          let keep, drop =
+            List.partition
+              (fun pc -> pc.last_used >= cutoff_idle && pc.created >= cutoff_create)
+              pool.idle
+          in
+          pool.idle <- keep;
+          let to_close = List.length drop in
+          pool.total_count <- pool.total_count - to_close;
+          Lwt.return drop)
+    in
+    let* () = Lwt_list.iter_s (fun pc -> Connection.disconnect pc.conn) drop_list in
+    cleanup_loop pool period
 
 let start_cleanup pool ~period =
   pool.cleanup_stopper <- false;

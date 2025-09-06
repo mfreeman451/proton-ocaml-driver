@@ -1,7 +1,7 @@
 open Connection
 open Block
 (* Columns used via qualified access *)
-open Lwt.Infix
+open Lwt.Syntax
 
 type query_result =
   | NoRows
@@ -16,18 +16,22 @@ let create ?host ?port ?database ?user ?password ?tls_config ?compression ?(sett
 let disconnect c = Connection.disconnect c.conn
 
 let execute c (query:string) : query_result Lwt.t =
-  Connection.send_query c.conn query >>= fun () ->
+  let* () = Connection.send_query c.conn query in
   let cols_header = ref None in
   let rows_acc : Columns.value list list ref = ref [] in
   let rec loop () =
-    Connection.receive_packet c.conn >>= function
+    let* pkt = Connection.receive_packet c.conn in
+    match pkt with
     | PEndOfStream -> Lwt.return_unit
     | PData b ->
-        if b.n_rows = 0 then
-          (if !cols_header = None then cols_header := Some (Block.columns_with_types b); loop ())
-        else
+        if b.n_rows = 0 then (
+          if !cols_header = None then cols_header := Some (Block.columns_with_types b);
+          loop ()
+        ) else (
           let rows = Block.get_rows b in
-          rows_acc := List.rev_append rows !rows_acc; loop ()
+          rows_acc := List.rev_append rows !rows_acc;
+          loop ()
+        )
     | PTotals b ->
         let rows = Block.get_rows b in
         rows_acc := List.rev_append rows !rows_acc; loop ()
@@ -35,7 +39,7 @@ let execute c (query:string) : query_result Lwt.t =
     | PLog _ -> loop ()
     | PProgress | PProfileInfo -> loop ()
   in
-  loop () >|= fun () ->
+  let+ () = loop () in
   match !rows_acc, !cols_header with
   | [], _ -> NoRows
   | rows, Some columns -> Rows (List.rev rows, columns)
@@ -58,81 +62,90 @@ type 'a streaming_result = {
 
 (* Core streaming implementation - processes packets and calls handler for each row *)
 let stream_query_rows c query ~on_row ~on_columns =
-  Connection.send_query c.conn query >>= fun () ->
+  let* () = Connection.send_query c.conn query in
   let columns_ref = ref [] in
   let rec loop () =
-    Connection.receive_packet c.conn >>= function
+    let* pkt = Connection.receive_packet c.conn in
+    match pkt with
     | PEndOfStream -> Lwt.return_unit
     | PData b ->
-        (if b.n_rows = 0 then (
+        let* () =
+          if b.n_rows = 0 then (
           (* Header block with column definitions *)
           let new_columns = Block.columns_with_types b in
           if new_columns <> [] then (
             columns_ref := new_columns;
             on_columns new_columns
           ) else Lwt.return_unit
-        ) else Lwt.return_unit) >>= fun () ->
-        (if b.n_rows > 0 then (
+          ) else Lwt.return_unit
+        in
+        let* () =
+          if b.n_rows > 0 then (
           (* Data block with actual rows *)
           let rows = Block.get_rows b in
           Lwt_list.iter_s on_row rows
-        ) else Lwt.return_unit) >>= fun () -> 
+          ) else Lwt.return_unit
+        in
         loop ()
     | PTotals b when b.n_rows > 0 ->
         let rows = Block.get_rows b in
-        Lwt_list.iter_s on_row rows >>= fun () ->
+        let* () = Lwt_list.iter_s on_row rows in
         loop ()
     | PExtremes _ | PLog _ | PProgress | PProfileInfo | PTotals _ -> 
         loop () (* Skip metadata packets *)
   in
-  loop () >|= fun () -> !columns_ref
+  let+ () = loop () in
+  !columns_ref
 
 let query_fold c query ~init ~f =
   let acc_ref = ref init in
-  stream_query_rows c query 
+  let+ _ = stream_query_rows c query 
     ~on_row:(fun row -> 
-      f !acc_ref row >>= fun new_acc ->
+      let* new_acc = f !acc_ref row in
       acc_ref := new_acc;
       Lwt.return_unit)
     ~on_columns:(fun _ -> Lwt.return_unit)
-  >|= fun _ -> !acc_ref
+  in
+  !acc_ref
 
 let query_iter c query ~f =
-  stream_query_rows c query
+  let+ _ = stream_query_rows c query
     ~on_row:f
     ~on_columns:(fun _ -> Lwt.return_unit)
-  >|= fun _ -> ()
+  in ()
 
 let query_collect c query =
-  query_fold c query ~init:[] ~f:(fun acc row -> Lwt.return (row :: acc))
-  >|= List.rev
+  let+ acc = query_fold c query ~init:[] ~f:(fun acc row -> Lwt.return (row :: acc)) in
+  List.rev acc
 
 let query_to_seq c query =
   (* This is tricky to implement properly with Lwt - for now return a simpler version *)
-  query_collect c query >|= List.to_seq
+  let+ rows = query_collect c query in
+  List.to_seq rows
 
 let query_fold_with_columns c query ~init ~f =
   let acc_ref = ref init in
   let columns_ref = ref [] in
-  stream_query_rows c query 
+  let+ final_columns = stream_query_rows c query 
     ~on_row:(fun row -> 
-      f !acc_ref row !columns_ref >>= fun new_acc ->
+      let* new_acc = f !acc_ref row !columns_ref in
       acc_ref := new_acc;
       Lwt.return_unit)
     ~on_columns:(fun cols -> 
       columns_ref := cols;
       Lwt.return_unit)
-  >|= fun final_columns -> 
+  in
   { rows = !acc_ref; columns = final_columns }
 
 let query_iter_with_columns c query ~f =
   let columns_ref = ref [] in
-  stream_query_rows c query
+  let+ final_columns = stream_query_rows c query
     ~on_row:(fun row -> f row !columns_ref)
     ~on_columns:(fun cols -> 
       columns_ref := cols;
       Lwt.return_unit)
-  >|= fun final_columns -> final_columns
+  in
+  final_columns
 
 (* Async insert functionality *)
 let create_async_inserter ?(config=None) c table_name =
@@ -145,7 +158,7 @@ let create_async_inserter ?(config=None) c table_name =
 let insert_rows c table_name ?(columns=[]) rows =
   let inserter = create_async_inserter c table_name in
   Async_insert.start inserter;
-  Async_insert.add_rows ~columns inserter rows >>= fun () ->
+  let* () = Async_insert.add_rows ~columns inserter rows in
   Async_insert.stop inserter
 
 let insert_row c table_name ?(columns=[]) row =

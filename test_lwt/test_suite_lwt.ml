@@ -624,7 +624,7 @@ let test_enum_unknown_values () =
   | _ -> Alcotest.fail "Unexpected block structure"
 
 (* Async insert tests *)
-open Lwt.Infix
+open Lwt.Syntax
 
 let test_async_inserter_creation () =
   let conn = Connection.create ~compression:Compress.None () in
@@ -648,9 +648,8 @@ let test_buffer_management () =
   let columns = [("name", "String"); ("value", "Int32")] in
   
   Lwt_main.run (
-    Async_insert.add_row ~columns inserter test_row >>= fun () ->
-    Async_insert.get_stats inserter >>= fun (row_count, byte_size) ->
-    
+    let* () = Async_insert.add_row ~columns inserter test_row in
+    let* (row_count, byte_size) = Async_insert.get_stats inserter in
     Alcotest.(check int) "Row count after insert" 1 row_count;
     Alcotest.(check bool) "Byte size increased" true (byte_size > 0);
     Lwt.return_unit
@@ -671,9 +670,8 @@ let test_batch_size_limits () =
   let columns = [("name", "String"); ("value", "Int32")] in
   
   Lwt_main.run (
-    Async_insert.add_rows ~columns inserter test_rows >>= fun () ->
-    Async_insert.get_stats inserter >>= fun (row_count, _) ->
-    
+    let* () = Async_insert.add_rows ~columns inserter test_rows in
+    let* (row_count, _) = Async_insert.get_stats inserter in
     Alcotest.(check int) "Row count at limit" 2 row_count;
     Lwt.return_unit
   )
@@ -688,12 +686,10 @@ let test_row_estimation () =
   let columns = [("name", "String"); ("value", "Int32")] in
   
   Lwt_main.run (
-    Async_insert.add_row ~columns inserter small_row >>= fun () ->
-    Async_insert.get_stats inserter >>= fun (_, small_size) ->
-    
-    Async_insert.add_row inserter large_row >>= fun () ->
-    Async_insert.get_stats inserter >>= fun (_, total_size) ->
-    
+    let* () = Async_insert.add_row ~columns inserter small_row in
+    let* (_, small_size) = Async_insert.get_stats inserter in
+    let* () = Async_insert.add_row inserter large_row in
+    let* (_, total_size) = Async_insert.get_stats inserter in
     let large_row_size = total_size - small_size in
     Alcotest.(check bool) "Large row bigger" true (large_row_size > small_size);
     Lwt.return_unit
