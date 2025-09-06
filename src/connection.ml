@@ -352,13 +352,12 @@ let send_data_block t (block: Block.t) =
   Binary_writer.write_string_to_buffer hdr "";
   let* () = write_buf writev_fn hdr in
   (* Send block payload (compressed if enabled) *)
-  let payload = Buffer.contents buf_block in
+  let payload = Buffer.to_bytes buf_block in
   match t.compression with
-  | Compress.None -> writev_fn [payload]
+  | Compress.None ->
+      writev_fn [Bytes.unsafe_to_string payload]
   | cmpr ->
-      let frame = Compress.build_compressed_frame (Bytes.unsafe_of_string payload) cmpr in
-      let s = Bytes.unsafe_to_string frame in
-      writev_fn [s]
+      Compress.write_compressed_block_lwt writev_fn payload cmpr
 
 let send_query t ?(query_id="") (query:string) =
   let* () = force_connect t in
@@ -491,10 +490,10 @@ let read_compressed_block_lwt read_fn : bytes Lwt.t =
   let uncompressed_size = Binary.bytes_get_int32_le header (checksum_size + 5) |> Int32.to_int in
   let payload_size = compressed_size - compress_header_size in
   let* payload = lwt_read_exact read_fn payload_size in
-  let checksum_input = Bytes.create (compress_header_size + payload_size) in
-  Bytes.blit header checksum_size checksum_input 0 compress_header_size;
-  Bytes.blit payload 0 checksum_input compress_header_size payload_size;
-  let calculated_checksum = Cityhash.cityhash128 checksum_input |> Cityhash.to_bytes in
+  let calculated_checksum =
+    Cityhash.cityhash128_2sub header checksum_size compress_header_size payload 0 payload_size
+    |> Cityhash.to_bytes
+  in
   let received_checksum = Bytes.sub header 0 checksum_size in
   if not (Bytes.equal calculated_checksum received_checksum) then Lwt.fail (Compression_error "Compression checksum verification failed")
   else (
