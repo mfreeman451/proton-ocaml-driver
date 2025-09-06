@@ -28,10 +28,10 @@ let run () =
     let* () = Connection.send_query conn query in
     printf "[streaming] Reader subscribed, waiting for rows...\n%!";
 
-    let open Lwt.Infix in
     let rec reader_loop () =
       if !printed >= target then Lwt.return_unit else
-      Connection.receive_packet conn >>= function
+      let* pkt = Connection.receive_packet conn in
+      match pkt with
       | Connection.PData b ->
           let rows = Block.get_rows b in
           List.iter (fun row ->
@@ -50,7 +50,8 @@ let run () =
     (* Insert rows with small delays so reader picks them up live *)
     let* () = Lwt_unix.sleep 0.2 in
     let insert_one i name =
-      Client.execute client (sprintf "INSERT INTO %s (id, name) SELECT to_int32(%d), '%s'" stream i name) >|= fun _ -> ()
+      let* _ = Client.execute client (sprintf "INSERT INTO %s (id, name) SELECT to_int32(%d), '%s'" stream i name) in
+      Lwt.return_unit
     in
     let* () = insert_one 1 "one" in
     let* () = Lwt_unix.sleep 0.15 in
@@ -64,8 +65,9 @@ let run () =
     printf "[streaming] Inserted 5 rows\n%!";
 
     (* Wait up to 5s for reader to print target rows *)
-    let timeout = Lwt_unix.sleep 5.0 >|= fun () -> `Timeout in
-    let* _ = Lwt.pick [ (reader >|= fun () -> `Done); timeout ] in
+    let timeout = let+ () = Lwt_unix.sleep 5.0 in `Timeout in
+    let reader_done = let+ () = reader in `Done in
+    let* _ = Lwt.pick [ reader_done; timeout ] in
     printf "[streaming] Printed %d/%d rows\n%!" !printed target;
     let* () = Connection.disconnect conn in
 
@@ -79,4 +81,3 @@ let run () =
 let () =
   try run () with
   | e -> Printf.printf "❌ Exception: %s\n%!" (Printexc.to_string e)
-
