@@ -28,6 +28,7 @@ let generate_batch_data count =
 let bench_async_batch_insert count =
   let open Lwt.Syntax in
   let client = Client.create ~host ~port ~compression:Compress.None () in
+
   let table_name = sprintf "bench_async_%d" (Random.int 100000) in
   
   (* Silent setup to keep output clean *)
@@ -75,6 +76,7 @@ let bench_async_batch_insert count =
 let bench_manual_async_insert count batch_size =
   let open Lwt.Syntax in
   let conn = Connection.create ~host ~port ~compression:Compress.None () in
+
   let table_name = sprintf "bench_manual_%d" (Random.int 100000) in
   
   (* Silent setup to keep output clean *)
@@ -131,7 +133,8 @@ let bench_manual_async_insert count batch_size =
 (* Benchmark: Streaming read with live data injection *)
 let bench_live_streaming_read count =
   let open Lwt.Syntax in
-  let client = Client.create ~host ~port () in
+  (* Use uncompressed connection for inserts until LZ4 write framing is aligned *)
+  let client = Client.create ~host ~port ~compression:Compress.None () in
   let table_name = sprintf "bench_stream_%d" (Random.int 100000) in
   
   printf "Setting up streaming table for %d row live read test...\n%!" count;
