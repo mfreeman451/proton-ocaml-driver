@@ -64,8 +64,8 @@ let rec write_value_to_buffer buf value =
       Buffer.add_char buf (Char.chr a);
       Buffer.add_char buf (Char.chr b)
   | Columns.VArray values ->
-      write_varint_to_buffer buf (List.length values);
-      List.iter (write_value_to_buffer buf) values
+      write_varint_to_buffer buf (Array.length values);
+      Array.iter (write_value_to_buffer buf) values
   | Columns.VMap pairs ->
       write_varint_to_buffer buf (List.length pairs);
       List.iter (fun (k, v) ->

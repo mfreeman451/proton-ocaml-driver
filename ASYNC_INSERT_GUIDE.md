@@ -122,7 +122,7 @@ All standard Proton value types are supported:
   Columns.VDateTime (timestamp, Some "UTC");
   Columns.VDateTime64 (timestamp, 3, Some "UTC");
   Columns.VEnum8 ("status", 1);
-  Columns.VArray [VInt32 1l; VInt32 2l; VInt32 3l];
+  Columns.VArray [| VInt32 1l; VInt32 2l; VInt32 3l |];
   Columns.VMap [(VString "key", VString "value")];
 ]
 ```

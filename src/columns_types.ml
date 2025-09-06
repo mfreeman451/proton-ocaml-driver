@@ -10,7 +10,7 @@ type value =
   | VDateTime64 of int64 * int * string option
   | VEnum8 of string * int  (* name, value *)
   | VEnum16 of string * int (* name, value *)
-  | VArray of value list
+  | VArray of value array
   | VMap of (value * value) list
   | VTuple of value list
 
@@ -43,7 +43,12 @@ let rec value_to_string = function
   | VEnum8 (name, _) -> name
   | VEnum16 (name, _) -> name
   | VArray values ->
-      let elements = List.map value_to_string values in
+      let elements =
+        (* Build without intermediate strings where easy *)
+        let acc = ref [] in
+        Array.iter (fun v -> acc := (value_to_string v) :: !acc) values;
+        List.rev !acc
+      in
       "[" ^ String.concat "," elements ^ "]"
   | VMap pairs ->
       let pair_strs = List.map (fun (k, v) -> value_to_string k ^ ":" ^ value_to_string v) pairs in

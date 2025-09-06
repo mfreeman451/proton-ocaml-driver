@@ -40,9 +40,9 @@ let reader_complex_of_spec ~(resolver:(string -> (in_channel -> int -> value arr
         for i=0 to n-1 do offsets.(i) <- read_uint64_le ic done;
         let total = if n=0 then 0 else Int64.to_int offsets.(n-1) in
         let all = element_reader ic total in
-        let res = Array.make n (VArray []) in
+        let res = Array.make n (VArray [||]) in
         let start_idx = ref 0 in
-        for i=0 to n-1 do let e = Int64.to_int offsets.(i) in res.(i) <- VArray (Array.sub all !start_idx (e - !start_idx) |> Array.to_list); start_idx := e done; res)
+        for i=0 to n-1 do let e = Int64.to_int offsets.(i) in res.(i) <- VArray (Array.sub all !start_idx (e - !start_idx)); start_idx := e done; res)
   | _ when starts_with ~prefix:"map(" s ->
       let (kt, vt) = parse_map_types s in
       let kr = resolver kt and vr = resolver vt in
@@ -83,9 +83,9 @@ let reader_complex_of_spec_br ~(resolver:(string -> (Buffered_reader.t -> int ->
         for i=0 to n-1 do offsets.(i) <- read_uint64_le_br br done;
         let total = if n=0 then 0 else Int64.to_int offsets.(n-1) in
         let all = element_reader br total in
-        let res = Array.make n (VArray []) in
+        let res = Array.make n (VArray [||]) in
         let start_idx = ref 0 in
-        for i=0 to n-1 do let e = Int64.to_int offsets.(i) in res.(i) <- VArray (Array.sub all !start_idx (e - !start_idx) |> Array.to_list); start_idx := e done; res)
+        for i=0 to n-1 do let e = Int64.to_int offsets.(i) in res.(i) <- VArray (Array.sub all !start_idx (e - !start_idx)); start_idx := e done; res)
   | _ when starts_with ~prefix:"map(" s ->
       let (kt, vt) = parse_map_types s in
       let kr = resolver kt and vr = resolver vt in
