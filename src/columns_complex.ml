@@ -36,7 +36,8 @@ let reader_complex_of_spec ~(resolver:(string -> (in_channel -> int -> value arr
       let element_type = parse_array_element_type s in
       let element_reader = resolver element_type in
       Some (fun ic n ->
-        let offsets = Array.init n (fun _ -> read_uint64_le ic) in
+        let offsets = Array.make n 0L in
+        for i=0 to n-1 do offsets.(i) <- read_uint64_le ic done;
         let total = if n=0 then 0 else Int64.to_int offsets.(n-1) in
         let all = element_reader ic total in
         let res = Array.make n (VArray []) in
@@ -46,7 +47,8 @@ let reader_complex_of_spec ~(resolver:(string -> (in_channel -> int -> value arr
       let (kt, vt) = parse_map_types s in
       let kr = resolver kt and vr = resolver vt in
       Some (fun ic n ->
-        let offsets = Array.init n (fun _ -> read_uint64_le ic) in
+        let offsets = Array.make n 0L in
+        for i=0 to n-1 do offsets.(i) <- read_uint64_le ic done;
         let total = if n=0 then 0 else Int64.to_int offsets.(n-1) in
         let keys = kr ic total and vals = vr ic total in
         let res = Array.make n (VMap []) in
@@ -57,14 +59,16 @@ let reader_complex_of_spec ~(resolver:(string -> (in_channel -> int -> value arr
       let readers = List.map resolver types in
       Some (fun ic n ->
         let cols = List.map (fun r -> r ic n) readers in
-        Array.init n (fun i -> VTuple (List.map (fun a -> a.(i)) cols)))
+        let res = Array.make n VNull in
+        for i=0 to n-1 do res.(i) <- VTuple (List.map (fun a -> a.(i)) cols) done; res)
   | _ when starts_with ~prefix:"nullable(" s ->
       let inner = String.sub s 9 (String.length s - 10) |> trim in
       let inner_reader = resolver inner in
       Some (fun ic n ->
-        let nulls = Array.init n (fun _ -> read_uint8 ic <> 0) in
+        let nulls = Array.make n false in
+        for i=0 to n-1 do nulls.(i) <- (read_uint8 ic <> 0) done;
         let vals = inner_reader ic n in
-        Array.mapi (fun i x -> if nulls.(i) then VNull else x) vals)
+        for i=0 to n-1 do if nulls.(i) then vals.(i) <- VNull done; vals)
   | _ -> None
 
 let reader_complex_of_spec_br ~(resolver:(string -> (Buffered_reader.t -> int -> value array))) (s:string)
@@ -75,7 +79,8 @@ let reader_complex_of_spec_br ~(resolver:(string -> (Buffered_reader.t -> int ->
       let element_type = parse_array_element_type s in
       let element_reader = resolver element_type in
       Some (fun br n ->
-        let offsets = Array.init n (fun _ -> read_uint64_le_br br) in
+        let offsets = Array.make n 0L in
+        for i=0 to n-1 do offsets.(i) <- read_uint64_le_br br done;
         let total = if n=0 then 0 else Int64.to_int offsets.(n-1) in
         let all = element_reader br total in
         let res = Array.make n (VArray []) in
@@ -85,7 +90,8 @@ let reader_complex_of_spec_br ~(resolver:(string -> (Buffered_reader.t -> int ->
       let (kt, vt) = parse_map_types s in
       let kr = resolver kt and vr = resolver vt in
       Some (fun br n ->
-        let offsets = Array.init n (fun _ -> read_uint64_le_br br) in
+        let offsets = Array.make n 0L in
+        for i=0 to n-1 do offsets.(i) <- read_uint64_le_br br done;
         let total = if n=0 then 0 else Int64.to_int offsets.(n-1) in
         let keys = kr br total and vals = vr br total in
         let res = Array.make n (VMap []) in
@@ -96,12 +102,14 @@ let reader_complex_of_spec_br ~(resolver:(string -> (Buffered_reader.t -> int ->
       let readers = List.map resolver types in
       Some (fun br n ->
         let cols = List.map (fun r -> r br n) readers in
-        Array.init n (fun i -> VTuple (List.map (fun a -> a.(i)) cols)))
+        let res = Array.make n VNull in
+        for i=0 to n-1 do res.(i) <- VTuple (List.map (fun a -> a.(i)) cols) done; res)
   | _ when starts_with ~prefix:"nullable(" s ->
       let inner = String.sub s 9 (String.length s - 10) |> trim in
       let inner_reader = resolver inner in
       Some (fun br n ->
-        let nulls = Array.init n (fun _ -> read_uint8_br br <> 0) in
+        let nulls = Array.make n false in
+        for i=0 to n-1 do nulls.(i) <- (read_uint8_br br <> 0) done;
         let vals = inner_reader br n in
-        Array.mapi (fun i x -> if nulls.(i) then VNull else x) vals)
+        for i=0 to n-1 do if nulls.(i) then vals.(i) <- VNull done; vals)
   | _ -> None
