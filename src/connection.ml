@@ -346,18 +346,20 @@ let send_data_block t (block: Block.t) =
       Binary_writer.write_value_to_buffer buf_block col.Block.data.(i)
     done
   ) block.columns;
-  (* Send packet header and table name (uncompressed) *)
+  (* Build packet header and table name; coalesce write with payload *)
   let hdr = Buffer.create 32 in
   Binary_writer.write_varint_to_buffer hdr (Protocol.client_packet_to_int Protocol.Data);
   Binary_writer.write_string_to_buffer hdr "";
-  let* () = write_buf writev_fn hdr in
-  (* Send block payload (compressed if enabled) *)
-  let payload = Buffer.to_bytes buf_block in
+  let hdr_s = Buffer.contents hdr in
+  (* Send block payload (compressed if enabled) in a single writev with header *)
+  let payload_s = Buffer.contents buf_block in
   match t.compression with
   | Compress.None ->
-      writev_fn [Bytes.unsafe_to_string payload]
+      writev_fn [hdr_s; payload_s]
   | cmpr ->
-      Compress.write_compressed_block_lwt writev_fn payload cmpr
+      let writev_with_hdr parts = writev_fn (hdr_s :: parts) in
+      let payload_b = Bytes.unsafe_of_string payload_s in
+      Compress.write_compressed_block_lwt writev_with_hdr payload_b cmpr
 
 let send_query t ?(query_id="") (query:string) =
   let* () = force_connect t in
