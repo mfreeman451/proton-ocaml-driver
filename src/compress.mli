@@ -38,6 +38,5 @@ val compress_zstd : bytes -> bytes
 (** Decompress ZSTD data with known uncompressed size *)
 val decompress_zstd : bytes -> int -> bytes
 
-(** New: Lwt-friendly write that avoids frame + checksum_input allocations *)
+(** Lwt-friendly write that avoids frame + checksum_input allocations *)
 val write_compressed_block_lwt : (string list -> unit Lwt.t) -> bytes -> method_t -> unit Lwt.t
-(* Deprecated sync and reader APIs removed. *)

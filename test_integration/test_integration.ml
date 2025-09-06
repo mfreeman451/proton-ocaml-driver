@@ -8,7 +8,7 @@ let result_to_string = function
 
 let print_rows = function
   | Client.NoRows -> Printf.printf "  No rows returned\n"
-  | Client.Rows (rows, cols) ->
+  | Client.Rows (rows, _cols) ->
       List.iter (fun row ->
         let values = List.map Column.value_to_string row in
         Printf.printf "  Row: [%s]\n" (String.concat ", " values)
@@ -22,7 +22,7 @@ let test_connection () =
     let open Lwt.Syntax in
     try
       (* Test basic connectivity *)
-      let* result = Client.execute client "SELECT 1 as test" in
+      let* _ = Client.execute client "SELECT 1 as test" in
       Printf.printf "✓ Connected to Proton successfully\n";
       
       (* Show version *)

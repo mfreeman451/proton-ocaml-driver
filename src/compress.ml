@@ -48,11 +48,7 @@ let decompress_zstd (data : bytes) (uncompressed_size : int) : bytes =
   let decompressed = Zstd.decompress uncompressed_size data_str in
   Bytes.of_string decompressed
 
-(* Build-a-frame path removed in favor of writev-based writers *)
-
-(* Legacy sync write/read paths removed *)
-
-(* New: Lwt-friendly write that avoids frame + checksum_input allocations *)
+(* Lwt-friendly write that avoids frame + checksum_input allocations *)
 let write_compressed_block_lwt
     (writev_fn : string list -> unit Lwt.t)
     (data : bytes)
@@ -83,10 +79,13 @@ let write_compressed_block_lwt
       let hash = Cityhash.cityhash128_2sub header 0 compress_header_size compressed_data 0 compressed_size in
       let checksum = Cityhash.to_bytes hash in
 
+      (* Coalesce checksum+header into a tiny leading segment (25 bytes) to
+         reduce write calls while avoiding a large frame allocation. *)
+      let lead = Bytes.create (checksum_size + compress_header_size) in
+      Bytes.blit checksum 0 lead 0 checksum_size;
+      Bytes.blit header 0 lead checksum_size compress_header_size;
+
       writev_fn
-        [ Bytes.unsafe_to_string checksum
-        ; Bytes.unsafe_to_string header
+        [ Bytes.unsafe_to_string lead
         ; Bytes.unsafe_to_string compressed_data
         ]
-
-(* Legacy buffered reader/writer APIs removed *)
