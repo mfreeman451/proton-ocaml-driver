@@ -480,14 +480,36 @@ let read_compressed_block_lwt read_fn : bytes Lwt.t =
 
 let read_uncompressed_block_lwt read_fn : bytes Lwt.t =
   let buf = Buffer.create 4096 in
-  let write_varint n = write_varint_int_to_buffer buf n in
-  let write_bytes b = Buffer.add_bytes buf b in
-  let read_and_copy_varint () = read_varint_int_lwt read_fn >|= fun v -> write_varint v; v in
-  let read_and_copy_bytes len = lwt_read_exact read_fn len >|= fun b -> write_bytes b; b in
-  let read_and_copy_str () = read_varint_int_lwt read_fn >>= fun len -> write_varint len; if len = 0 then Lwt.return "" else lwt_read_exact read_fn len >|= fun b -> let s = Bytes.to_string b in Buffer.add_string buf s; s in
+  (* Read a varint from the wire, append its raw bytes to buf, and return the int *)
+  let read_varint_raw_to_buf () : int Lwt.t =
+    let raw = Bytes.create 10 in
+    let rec loop shift acc idx =
+      let b = Bytes.create 1 in
+      read_fn b 0 1 >>= fun n ->
+      if n = 0 then Lwt.fail End_of_file else
+      let vb = Bytes.get b 0 in
+      Bytes.set raw idx vb;
+      let v = (Char.code vb land 0x7f) lsl shift in
+      if (Char.code vb land 0x80) <> 0 then loop (shift + 7) (acc lor v) (idx + 1)
+      else (
+        (* append the collected raw varint bytes *)
+        Buffer.add_subbytes buf raw 0 (idx + 1);
+        Lwt.return (acc lor v)
+      )
+    in
+    loop 0 0 0
+  in
+  let read_and_copy_bytes len =
+    lwt_read_exact read_fn len >|= fun b -> Buffer.add_bytes buf b; b
+  in
+  let read_and_copy_str () =
+    read_varint_raw_to_buf () >>= fun len ->
+    if len = 0 then Lwt.return ""
+    else read_and_copy_bytes len >|= Bytes.to_string
+  in
   (* BlockInfo *)
   let rec copy_block_info () =
-    read_and_copy_varint () >>= fun field ->
+    read_varint_raw_to_buf () >>= fun field ->
     if field = 0 then Lwt.return_unit
     else if field = 1 then read_and_copy_bytes 1 >>= fun _ -> copy_block_info ()
     else if field = 2 then read_and_copy_bytes 4 >>= fun _ -> copy_block_info ()
@@ -495,8 +517,8 @@ let read_uncompressed_block_lwt read_fn : bytes Lwt.t =
   in
   copy_block_info () >>= fun () ->
   (* n_columns, n_rows *)
-  read_and_copy_varint () >>= fun n_columns ->
-  read_and_copy_varint () >>= fun n_rows ->
+  read_varint_raw_to_buf () >>= fun n_columns ->
+  read_varint_raw_to_buf () >>= fun n_rows ->
   let rec copy_columns i =
     if i = n_columns then Lwt.return_unit else
     read_and_copy_str () >>= fun _col_name ->
