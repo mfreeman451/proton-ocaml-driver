@@ -63,9 +63,9 @@ let format_ipv6_16 (b:bytes) : string =
   write_hextet 7 35;
   Bytes.unsafe_to_string out
 
-let reader_primitive_of_spec (s:string)
+(* New: assumes [s] is already normalized (lowercased + trimmed) *)
+let reader_primitive_of_spec_normalized (s:string)
   : ((in_channel -> int -> value array)) option =
-  let s = String.lowercase_ascii (String.trim s) in
   match true with
   | _ when s = "string" -> Some (fun ic n -> let a = Array.make n Null in for i=0 to n-1 do a.(i) <- String (read_str ic) done; a)
   | _ when s = "int8" -> Some (fun ic n -> let a = Array.make n Null in for i=0 to n-1 do let b = read_uint8 ic in let v = if b > 127 then b - 256 else b in a.(i) <- Int32 (Int32.of_int v) done; a)
@@ -146,9 +146,11 @@ let reader_primitive_of_spec (s:string)
   Some (fun ic n -> let a = Array.make n Null in for i=0 to n-1 do a.(i) <- Int64 (read_uint64_le ic) done; a)
   | _ -> None
 
-let reader_primitive_of_spec_br (s:string)
+(* Old entry kept for compatibility (normalizes then delegates) *)
+
+(* New: assumes [s] is already normalized (lowercased + trimmed) *)
+let reader_primitive_of_spec_br_normalized (s:string)
   : ((Buffered_reader.t -> int -> value array)) option =
-  let s = String.lowercase_ascii (String.trim s) in
   match true with
   | _ when s = "string" -> Some (fun br n -> let a = Array.make n Null in for i=0 to n-1 do a.(i) <- String (read_str_br br) done; a)
   | _ when s = "int8" -> Some (fun br n -> let a = Array.make n Null in for i=0 to n-1 do let b = read_uint8_br br in let v = if b > 127 then b - 256 else b in a.(i) <- Int32 (Int32.of_int v) done; a)
@@ -229,3 +231,4 @@ let reader_primitive_of_spec_br (s:string)
       Some (fun br n -> let a = Array.make n Null in for i=0 to n-1 do a.(i) <- Int64 (read_uint64_le_br br) done; a)
   | _ -> None
 
+(* Old entry kept for compatibility (normalizes then delegates) *)

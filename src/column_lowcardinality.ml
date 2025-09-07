@@ -1,9 +1,9 @@
 open Column_types
 open Binary
 
-let reader_lowcardinality_of_spec ~(resolver:(string -> (in_channel -> int -> value array))) (s:string)
+(* New: assumes [s] is already normalized (lowercased + trimmed) *)
+let reader_lowcardinality_of_spec_normalized ~(resolver:(string -> (in_channel -> int -> value array))) (s:string)
   : ((in_channel -> int -> value array)) option =
-  let s = String.lowercase_ascii (String.trim s) in
   if has_prefix s "lowcardinality(" then (
     let inner = String.sub s 15 (String.length s - 16) |> String.trim in
     let inner_nullable, inner_base =
@@ -30,9 +30,10 @@ let reader_lowcardinality_of_spec ~(resolver:(string -> (in_channel -> int -> va
       res)
   ) else None
 
-let reader_lowcardinality_of_spec_br ~(resolver:(string -> (Buffered_reader.t -> int -> value array))) (s:string)
+
+(* New: assumes [s] is already normalized (lowercased + trimmed) *)
+let reader_lowcardinality_of_spec_br_normalized ~(resolver:(string -> (Buffered_reader.t -> int -> value array))) (s:string)
   : ((Buffered_reader.t -> int -> value array)) option =
-  let s = String.lowercase_ascii (String.trim s) in
   if has_prefix s "lowcardinality(" then (
     let inner = String.sub s 15 (String.length s - 16) |> String.trim in
     let inner_nullable, inner_base =
@@ -58,4 +59,3 @@ let reader_lowcardinality_of_spec_br ~(resolver:(string -> (Buffered_reader.t ->
       done;
       res)
   ) else None
-

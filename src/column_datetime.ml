@@ -25,9 +25,9 @@ let parse_datetime64_params s =
         (precision, Some clean_tz)
     | _ -> (3, None)
 
-let reader_datetime_of_spec (s:string)
+(* New: assumes [s] is already normalized (lowercased + trimmed) *)
+let reader_datetime_of_spec_normalized (s:string)
   : ((in_channel -> int -> value array)) option =
-  let s = String.lowercase_ascii (String.trim s) in
   match true with
   | _ when s = "date" -> Some (fun ic n -> let a = Array.make n Null in for i=0 to n-1 do
       let a0 = read_uint8 ic in
@@ -49,9 +49,10 @@ let reader_datetime_of_spec (s:string)
       Some (fun ic n -> let a = Array.make n Null in for i=0 to n-1 do let ts = read_int32_le ic |> Int64.of_int32 in a.(i) <- DateTime (Int64.logand ts 0xFFFFFFFFL, timezone) done; a)
   | _ -> None
 
-let reader_datetime_of_spec_br (s:string)
+
+(* New: assumes [s] is already normalized (lowercased + trimmed) *)
+let reader_datetime_of_spec_br_normalized (s:string)
   : ((Buffered_reader.t -> int -> value array)) option =
-  let s = String.lowercase_ascii (String.trim s) in
   match true with
   | _ when s = "date" -> Some (fun br n -> let a = Array.make n Null in for i=0 to n-1 do
       let a0 = Buffered_reader.input_byte br in
@@ -72,4 +73,3 @@ let reader_datetime_of_spec_br (s:string)
       let timezone = match parse_datetime_params s with None -> None | Some tz -> Some (if tz.[0]='\'' && tz.[String.length tz - 1]='\'' then String.sub tz 1 (String.length tz - 2) else tz) in
       Some (fun br n -> let a = Array.make n Null in for i=0 to n-1 do let ts = read_int32_le_br br |> Int64.of_int32 in a.(i) <- DateTime (Int64.logand ts 0xFFFFFFFFL, timezone) done; a)
   | _ -> None
-
