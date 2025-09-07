@@ -25,7 +25,7 @@ let parse_datetime64_params s =
         (precision, Some clean_tz)
     | _ -> (3, None)
 
-(* New: assumes [s] is already normalized (lowercased + trimmed) *)
+(* assumes [s] is already normalized (lowercased + trimmed) *)
 let reader_datetime_of_spec_normalized (s:string)
   : ((in_channel -> int -> value array)) option =
   match true with
@@ -50,7 +50,7 @@ let reader_datetime_of_spec_normalized (s:string)
   | _ -> None
 
 
-(* New: assumes [s] is already normalized (lowercased + trimmed) *)
+(* assumes [s] is already normalized (lowercased + trimmed) *)
 let reader_datetime_of_spec_br_normalized (s:string)
   : ((Buffered_reader.t -> int -> value array)) option =
   match true with

@@ -63,7 +63,7 @@ let format_ipv6_16 (b:bytes) : string =
   write_hextet 7 35;
   Bytes.unsafe_to_string out
 
-(* New: assumes [s] is already normalized (lowercased + trimmed) *)
+(* assumes [s] is already normalized (lowercased + trimmed) *)
 let reader_primitive_of_spec_normalized (s:string)
   : ((in_channel -> int -> value array)) option =
   match true with
@@ -146,9 +146,7 @@ let reader_primitive_of_spec_normalized (s:string)
   Some (fun ic n -> let a = Array.make n Null in for i=0 to n-1 do a.(i) <- Int64 (read_uint64_le ic) done; a)
   | _ -> None
 
-(* Old entry kept for compatibility (normalizes then delegates) *)
-
-(* New: assumes [s] is already normalized (lowercased + trimmed) *)
+(* assumes [s] is already normalized (lowercased + trimmed) *)
 let reader_primitive_of_spec_br_normalized (s:string)
   : ((Buffered_reader.t -> int -> value array)) option =
   match true with
@@ -230,5 +228,3 @@ let reader_primitive_of_spec_br_normalized (s:string)
       (* Decimal values are stored as integers. For Decimal(10,2) it's int64 *)
       Some (fun br n -> let a = Array.make n Null in for i=0 to n-1 do a.(i) <- Int64 (read_uint64_le_br br) done; a)
   | _ -> None
-
-(* Old entry kept for compatibility (normalizes then delegates) *)
