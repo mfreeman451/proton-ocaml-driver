@@ -352,13 +352,13 @@ let send_data_block t (block: Block.t) =
   Binary_writer.write_string_to_buffer hdr "";
   let hdr_s = Buffer.contents hdr in
   (* Send block payload (compressed if enabled) in a single writev with header *)
-  let payload_s = Buffer.contents buf_block in
   match t.compression with
   | Compress.None ->
+      let payload_s = Buffer.contents buf_block in
       writev_fn [hdr_s; payload_s]
   | cmpr ->
       let writev_with_hdr parts = writev_fn (hdr_s :: parts) in
-      let payload_b = Bytes.unsafe_of_string payload_s in
+      let payload_b = Buffer.to_bytes buf_block in
       Compress.write_compressed_block_lwt writev_with_hdr payload_b cmpr
 
 let send_query t ?(query_id="") (query:string) =
