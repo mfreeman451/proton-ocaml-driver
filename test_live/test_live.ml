@@ -224,8 +224,9 @@ module DataTypeTests = struct
         let insert_one id = 
           let insert = sprintf "INSERT INTO %s (id, name, age, balance, bignum, created) SELECT to_int32(%d), 'Stream%d', to_uint32(%d), to_float64(%f), to_int64(%Ld), now()"
             table_name id id (20 + id) (1000.0 +. float_of_int id) (Int64.of_int (1000000 + id))
+          in
+          Client.execute client insert
         in
-        let* _ = Client.execute client insert in
         let* _ = insert_one 101 in
         let* _ = insert_one 102 in
         let* _ = insert_one 103 in
