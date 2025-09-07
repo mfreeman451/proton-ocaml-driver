@@ -28,7 +28,7 @@ let parse_tuple_types s =
     | _ -> split acc depth (i+1) last in
   split [] 0 0 0 |> List.map String.trim
 
-(* New: assumes [s] is already normalized (lowercased + trimmed) *)
+(* assumes [s] is already normalized (lowercased + trimmed) *)
 let reader_complex_of_spec_normalized ~(resolver:(string -> (in_channel -> int -> value array))) (s:string)
   : ((in_channel -> int -> value array)) option =
   match true with
@@ -72,7 +72,7 @@ let reader_complex_of_spec_normalized ~(resolver:(string -> (in_channel -> int -
   | _ -> None
 
 
-(* New: assumes [s] is already normalized (lowercased + trimmed) *)
+(* assumes [s] is already normalized (lowercased + trimmed) *)
 let reader_complex_of_spec_br_normalized ~(resolver:(string -> (Buffered_reader.t -> int -> value array))) (s:string)
   : ((Buffered_reader.t -> int -> value array)) option =
   match true with
