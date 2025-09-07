@@ -145,7 +145,7 @@ let[@inline] bytes_get_int64_le buf offset =
   let high = bytes_get_int32_le buf (offset + 4) in
   Int64.logor 
     (Int64.logand (Int64.of_int32 low) 0xFFFFFFFFL)
-    (Int64.shift_left (Int64.of_int32 high) 32)
+    (Int64.shift_left (Int64.logand (Int64.of_int32 high) 0xFFFFFFFFL) 32)
 
 let[@inline] bytes_set_int64_le buf offset v =
   let low = Int64.to_int (Int64.logand v 0xFFFFFFFFL) in

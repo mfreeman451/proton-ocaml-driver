@@ -130,6 +130,10 @@ val decompress_zstd : bytes -> int -> bytes
     avoiding unnecessary allocations. Handles checksum calculation and header
     formatting according to the Proton protocol.
     
+    Streams in <= 1MB frames: if [data] exceeds {!max_block_size}, this will
+    emit multiple compression frames back-to-back via [writer]. The caller
+    should send any protocol packet header once before invoking this function.
+
     @param writer Function to write string list to output
     @param data Raw data to compress and write
     @param method Compression method to use
@@ -146,3 +150,29 @@ val decompress_zstd : bytes -> int -> bytes
     
     @since 1.0.0 *)
 val write_compressed_block_lwt : (string list -> unit Lwt.t) -> bytes -> method_t -> unit Lwt.t
+
+(** {2 Streaming API} *)
+
+(** Streaming compression writer that accepts incremental writes and emits
+    protocol-framed compressed blocks (<= 1MB each). *)
+module Stream : sig
+  type t
+
+  (** [create writer method] creates a new streaming compressor. The caller
+      should have already written any protocol packet header. *)
+  val create : (string list -> unit Lwt.t) -> method_t -> t
+
+  (** [write_bytes t b off len] appends [len] bytes from [b] at [off] into the
+      stream. When the internal buffer reaches {!max_block_size}, a frame is
+      compressed and written. *)
+  val write_bytes : t -> bytes -> int -> int -> unit Lwt.t
+
+  (** [write_string t s] convenience wrapper for strings. *)
+  val write_string : t -> string -> unit Lwt.t
+
+  (** [write_char t c] writes a single byte. *)
+  val write_char : t -> char -> unit Lwt.t
+
+  (** [flush t] compresses and writes any buffered data as a final frame. *)
+  val flush : t -> unit Lwt.t
+end

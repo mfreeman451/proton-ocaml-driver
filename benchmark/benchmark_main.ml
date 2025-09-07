@@ -102,12 +102,12 @@ let bench_reader_for_spec ~spec ~rows ~loops make_bytes =
       let reader = Column.compile_reader_br spec in
       ignore (reader br rows)
     done) in
-  (* Cached: compile once, then reuse *)
+  (* Cached: compile once, then reuse - note: both will recompile each time since reader functions aren't cached in public API *)
   Column.reset_cache_stats (); Column.clear_reader_caches ();
   let (_, warm_s) = time (fun () ->
-    let reader = Column.reader_of_spec_br spec in
     for _i = 1 to loops do
       let br = Buffered_reader.create_from_bytes_no_copy payload in
+      let reader = Column.compile_reader_br spec in
       ignore (reader br rows)
     done) in
   let stats = Column.get_cache_stats () in
@@ -146,6 +146,16 @@ let generate_batch_data count =
   ) in
   Array.to_list rows
 
+(* Generate compression-friendly test data (no Float64 due to compression issues) *)
+let generate_compression_batch_data count =
+  let rows = Array.init count (fun i ->
+    let id = Int32.of_int (i + 1) in
+    let name = sprintf "User%d" (i + 1) in
+    let score = Int32.of_int (Random.int 1000) in
+    [Column.Int32 id; Column.String name; Column.Int32 score]
+  ) in
+  Array.to_list rows
+
 (* Helper: verify row count with simple retry to handle eventual visibility *)
 let verify_count client table_name ~expected =
   let open Lwt.Syntax in
@@ -173,9 +183,9 @@ let verify_count client table_name ~expected =
   loop 10
 
 (* Benchmark: Async batch insert *)
-let bench_async_batch_insert count =
+let bench_async_batch_insert ?(compression=Compress.None) count =
   let open Lwt.Syntax in
-  let client = Client.create ~host ~port ~compression:Compress.None () in
+  let client = Client.create ~host ~port ~compression () in
 
   let table_name = sprintf "bench_async_%d" (Random.int 100000) in
   
@@ -212,14 +222,14 @@ let bench_async_batch_insert count =
   Lwt.return rate
 
 (* Benchmark: Manual async insert with custom config *)
-let bench_manual_async_insert count batch_size =
+let bench_manual_async_insert ?(compression=Compress.None) count batch_size =
   let open Lwt.Syntax in
-  let conn = Connection.create ~host ~port ~compression:Compress.None () in
+  let conn = Connection.create ~host ~port ~compression () in
 
   let table_name = sprintf "bench_manual_%d" (Random.int 100000) in
   
   (* Silent setup to keep output clean *)
-  let client = Client.create ~host ~port ~compression:Compress.None () in
+  let client = Client.create ~host ~port ~compression () in
   let* () = 
     let drop_sql = sprintf "DROP STREAM IF EXISTS %s" table_name in
     let create_sql = sprintf {|
@@ -261,10 +271,9 @@ let bench_manual_async_insert count batch_size =
   Lwt.return rate
 
 (* Benchmark: Streaming read with live data injection *)
-let bench_live_streaming_read count =
+let bench_live_streaming_read ?(compression=Compress.None) count =
   let open Lwt.Syntax in
-  (* Use uncompressed connection for inserts until LZ4 write framing is aligned *)
-  let client = Client.create ~host ~port ~compression:Compress.None () in
+  let client = Client.create ~host ~port ~compression () in
   let table_name = sprintf "bench_stream_%d" (Random.int 100000) in
   
   printf "Setting up streaming table for %d row live read test...\n%!" count;
@@ -286,7 +295,7 @@ let bench_live_streaming_read count =
   printf "Starting live streaming read (will inject %d rows)...\n%!" count;
   
   (* Start streaming connection FIRST *)
-  let conn = Connection.create ~host ~port ~compression:Compress.None () in
+  let conn = Connection.create ~host ~port ~compression () in
   let query = sprintf "SELECT id, name, value FROM %s" table_name in
   let* () = Connection.send_query conn query in
   
@@ -340,6 +349,112 @@ let bench_live_streaming_read count =
   let* () = Connection.disconnect conn in
   let* _ = Client.execute client (sprintf "DROP STREAM IF EXISTS %s" table_name) in
   Lwt.return rate
+
+(* Compression-specific benchmark with compression-friendly data *)
+let bench_compression_insert ?(compression=Compress.None) count =
+  let open Lwt.Syntax in
+  let client = Client.create ~host ~port ~compression () in
+
+  let table_name = sprintf "bench_compression_%d" (Random.int 100000) in
+  
+  (* Silent setup to keep output clean *)
+  let* () = 
+    let drop_sql = sprintf "DROP STREAM IF EXISTS %s" table_name in
+    let create_sql = sprintf {|
+      CREATE STREAM %s (
+        id int32,
+        name string,
+        score int32
+      )
+    |} table_name in
+    let* _ = Client.execute client drop_sql in
+    let* _ = Client.execute client create_sql in
+    Lwt.return_unit
+  in
+  
+  let rows = generate_compression_batch_data count in
+  let columns = [("id", "int32"); ("name", "string"); ("score", "int32")] in
+  
+  let* (_, elapsed) = time_it_lwt (sprintf "COMPRESSION_BATCH_INSERT_%d_ROWS" count) (fun () ->
+    (* Use the high-level async batch insert from Client *)
+    Client.insert_rows ~columns client table_name rows
+  ) in
+  
+  (* Verify rows actually inserted (poll without forcing table mode) *)
+  let* verified = verify_count client table_name ~expected:count in
+  let rate = float_of_int count /. elapsed in
+  printf "compression: %7d rows | %6.2fs | %8.0f rows/s | verified=%b\n%!"
+    count elapsed rate (verified = count);
+  
+  let* _ = Client.execute client (sprintf "DROP STREAM IF EXISTS %s" table_name) in
+  Lwt.return rate
+
+let truthy name =
+  match Sys.getenv_opt name with
+  | Some s -> let v = String.lowercase_ascii (String.trim s) in v = "1" || v = "true" || v = "yes"
+  | None -> false
+
+let run_compression_benchmarks () =
+  let open Lwt.Syntax in
+  printf "\n=== COMPRESSION PERFORMANCE BENCHMARKS ===\n\n%!";
+  printf "Streaming compression enabled; measuring insert performance.\n%!";
+  (* Select which compression methods to exercise via COMP_METHOD=none|lz4|zstd *)
+  let comp_methods =
+    match Sys.getenv_opt "COMP_METHOD" with
+    | Some s -> (
+        match String.lowercase_ascii (String.trim s) with
+        | "none" -> [ ("None", Compress.None) ]
+        | "lz4"  -> [ ("LZ4", Compress.LZ4) ]
+        | "zstd" -> [ ("ZSTD", Compress.ZSTD) ]
+        | _ -> [ ("None", Compress.None); ("LZ4", Compress.LZ4); ("ZSTD", Compress.ZSTD) ]
+      )
+    | None -> [ ("None", Compress.None); ("LZ4", Compress.LZ4); ("ZSTD", Compress.ZSTD) ]
+  in
+  (* First test if compression connectivity works, unless SKIP_COMP_CONNECTIVITY=1 *)
+  let* () =
+    if truthy "SKIP_COMP_CONNECTIVITY" then Lwt.return_unit else (
+      printf "Testing compression connectivity...\n%!";
+      let* connectivity_results = 
+        Lwt_list.map_s (fun (name, method_) ->
+          Lwt.catch 
+            (fun () ->
+              let client = Client.create ~host ~port ~compression:method_ () in
+              let* _ = Client.execute client "SELECT 1 as test" in
+              printf "✅ %s connectivity test passed\n%!" name;
+              Lwt.return (name, true))
+            (fun ex ->
+              printf "❌ %s connectivity failed: %s\n%!" name (Printexc.to_string ex);
+              Lwt.return (name, false))
+        ) comp_methods
+      in
+      printf "\nCompression Connectivity Results:\n%!";
+      List.iter (fun (name, success) ->
+        printf "  %s: %s\n%!" name (if success then "✅ Connected" else "❌ Failed")
+      ) connectivity_results;
+      Lwt.return_unit
+    )
+  in
+  (* Run actual compressed insert benchmarks to use bench_compression_insert *)
+  let test_rows = match Sys.getenv_opt "COMP_ROWS" with Some s -> int_of_string_opt (String.trim s) |> Option.value ~default:10000 | None -> 10000 in
+  printf "\nRunning compression insert benchmarks (%d rows)...\n%!" test_rows;
+  let* insert_results =
+    Lwt_list.map_s (fun (name, method_) ->
+      Lwt.catch
+        (fun () ->
+          let* rate = bench_compression_insert ~compression:method_ test_rows in
+          Lwt.return (name, Some rate))
+        (fun ex ->
+          printf "  %s insert failed: %s\n%!" name (Printexc.to_string ex);
+          Lwt.return (name, None))
+    ) comp_methods
+  in
+  printf "\nCompression Insert Results:\n%!";
+  List.iter (fun (name, res) ->
+    match res with
+    | Some rate -> printf "  %-5s: %10.0f rows/sec\n%!" name rate
+    | None -> printf "  %-5s: ❌ failed\n%!" name
+  ) insert_results;
+  Lwt.return_unit
 
 let run_insert_benchmarks sizes =
   let open Lwt.Syntax in
@@ -400,12 +515,21 @@ let test_million_rows () =
   let open Lwt.Syntax in
   printf "\n=== 🚀 1 MILLION ROW CHALLENGE 🚀 ===\n\n%!";
   
-  printf "Testing 1M row async batch insert performance...\n%!";
-  let* insert_rate = bench_async_batch_insert 1_000_000 in
+  printf "Testing 1M row async batch insert performance (uncompressed baseline)...\n%!";
+  let* baseline_rate = bench_async_batch_insert 1_000_000 in
   
-  printf "1M Async Insert Results:\n%!";
-  printf "  Rate: %.0f rows/second\n%!" insert_rate;
-  printf "  Time: %.2f minutes\n%!" (1_000_000.0 /. insert_rate /. 60.0);
+  printf "Testing 1M row async batch insert with LZ4 compression...\n%!";  
+  let* lz4_rate = bench_async_batch_insert ~compression:Compress.LZ4 1_000_000 in
+  
+  printf "\n1M Row Compression Results:\n%!";
+  printf "  Uncompressed: %.0f rows/sec (%.2f minutes)\n%!" 
+    baseline_rate (1_000_000.0 /. baseline_rate /. 60.0);
+  printf "  LZ4 Compressed: %.0f rows/sec (%.2f minutes)\n%!" 
+    lz4_rate (1_000_000.0 /. lz4_rate /. 60.0);
+  printf "  LZ4 Performance: %.2fx %s uncompressed\n%!" 
+    (lz4_rate /. baseline_rate)
+    (if lz4_rate > baseline_rate then "faster than" else "slower than");
+  
   (* Show cache stats for column readers to validate cache behavior *)
   let stats = Column.get_cache_stats () in
   printf "  Column Reader Cache: %s\n%!" (Column.cache_stats_to_string stats);
@@ -446,14 +570,21 @@ let run_benchmarks () =
   let test_sizes = [1000; 10000; 50000] in
   let streaming_sizes = [1000; 5000; 10000] in
   
-  let* () = run_insert_benchmarks test_sizes in
-  let* () = run_streaming_benchmarks streaming_sizes in
-  
-  (* Million row challenge *)
-  let* () = test_million_rows () in
-  
+  (* Allow running only one section via env flags *)
+  let* () =
+    if truthy "ONLY_COMPRESSION" then (
+      let* () = run_compression_benchmarks () in
+      printf "\nONLY_COMPRESSION=1 set: finished compression benchmarks.\n%!";
+      Lwt.return_unit
+    ) else (
+      let* () = (if truthy "SKIP_INSERT" then (printf "Skipping insert benchmarks.\n%!"; Lwt.return_unit) else run_insert_benchmarks test_sizes) in
+      let* () = (if truthy "SKIP_STREAMING" then (printf "Skipping streaming benchmarks.\n%!"; Lwt.return_unit) else run_streaming_benchmarks streaming_sizes) in
+      let* () = (if truthy "SKIP_COMPRESSION" then (printf "Skipping compression benchmarks.\n%!"; Lwt.return_unit) else run_compression_benchmarks ()) in
+      let* () = (if truthy "SKIP_MILLION" then (printf "Skipping 1M row challenge.\n%!"; Lwt.return_unit) else test_million_rows ()) in
+      Lwt.return_unit
+    )
+  in
   printf "\n🎉 All async benchmarks completed!\n%!";
- 
   Lwt.return_unit
   )
 

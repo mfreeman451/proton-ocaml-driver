@@ -57,27 +57,27 @@ and reader_of_spec_br (spec:string) : (Buffered_reader.t -> int -> value array) 
 
 (* Stats helpers *)
 type cache_stats = {
-  reader_hits: int;
-  reader_misses: int;
-  reader_entries: int;
-  br_hits: int;
-  br_misses: int;
-  br_entries: int;
+  reader_cache_size: int;
+  reader_cache_hits: int;
+  reader_cache_misses: int;
+  reader_br_cache_size: int;
+  reader_br_cache_hits: int;
+  reader_br_cache_misses: int;
 }
 
 let get_cache_stats () : cache_stats = {
-  reader_hits = !reader_cache_hits;
-  reader_misses = !reader_cache_misses;
-  reader_entries = Hashtbl.length reader_cache;
-  br_hits = !reader_br_cache_hits;
-  br_misses = !reader_br_cache_misses;
-  br_entries = Hashtbl.length reader_br_cache;
+  reader_cache_size = Hashtbl.length reader_cache;
+  reader_cache_hits = !reader_cache_hits;
+  reader_cache_misses = !reader_cache_misses;
+  reader_br_cache_size = Hashtbl.length reader_br_cache;
+  reader_br_cache_hits = !reader_br_cache_hits;
+  reader_br_cache_misses = !reader_br_cache_misses;
 }
 
 let cache_stats_to_string (s:cache_stats) =
   Printf.sprintf
     "readers: hits=%d misses=%d entries=%d | buffered: hits=%d misses=%d entries=%d"
-    s.reader_hits s.reader_misses s.reader_entries s.br_hits s.br_misses s.br_entries
+    s.reader_cache_hits s.reader_cache_misses s.reader_cache_size s.reader_br_cache_hits s.reader_br_cache_misses s.reader_br_cache_size
 
 let reset_cache_stats () =
   reader_cache_hits := 0;

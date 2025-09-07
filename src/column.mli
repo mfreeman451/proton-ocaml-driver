@@ -165,3 +165,15 @@ val reset_cache_stats : unit -> unit
     
     @since 1.0.0 *)
 val clear_reader_caches : unit -> unit
+
+(** {2 Utilities} *)
+
+(** [has_prefix s p] returns true if string [s] starts with prefix [p].
+    Optimized to avoid intermediate allocations in hot paths. *)
+val has_prefix : string -> string -> bool
+
+(** Resolve and cache a reader for a type spec. *)
+val reader_of_spec : string -> (in_channel -> int -> value array)
+
+(** Resolve and cache a buffered reader for a type spec. *)
+val reader_of_spec_br : string -> (Buffered_reader.t -> int -> value array)
