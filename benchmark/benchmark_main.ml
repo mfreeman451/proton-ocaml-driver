@@ -146,13 +146,23 @@ let generate_batch_data count =
   ) in
   Array.to_list rows
 
-(* Generate compression-friendly test data (no Float64 due to compression issues) *)
+(* Generate compression-friendly test data (int-based) *)
 let generate_compression_batch_data count =
   let rows = Array.init count (fun i ->
     let id = Int32.of_int (i + 1) in
     let name = sprintf "User%d" (i + 1) in
     let score = Int32.of_int (Random.int 1000) in
     [Column.Int32 id; Column.String name; Column.Int32 score]
+  ) in
+  Array.to_list rows
+
+(* Float64 payloads for compression tests *)
+let generate_compression_batch_data_float count =
+  let rows = Array.init count (fun i ->
+    let id = Int32.of_int (i + 1) in
+    let name = sprintf "User%d" (i + 1) in
+    let value = float_of_int (i mod 1000) +. 0.125 in
+    [Column.Int32 id; Column.String name; Column.Float64 value]
   ) in
   Array.to_list rows
 
@@ -389,6 +399,42 @@ let bench_compression_insert ?(compression=Compress.None) count =
   let* _ = Client.execute client (sprintf "DROP STREAM IF EXISTS %s" table_name) in
   Lwt.return rate
 
+(* Float64 variant to exercise floating-point payloads under compression *)
+let bench_compression_insert_float ?(compression=Compress.None) count =
+  let open Lwt.Syntax in
+  let client = Client.create ~host ~port ~compression () in
+
+  let table_name = sprintf "bench_compression_f64_%d" (Random.int 100000) in
+  
+  let* () = 
+    let drop_sql = sprintf "DROP STREAM IF EXISTS %s" table_name in
+    let create_sql = sprintf {|
+      CREATE STREAM %s (
+        id int32,
+        name string,
+        value float64
+      )
+    |} table_name in
+    let* _ = Client.execute client drop_sql in
+    let* _ = Client.execute client create_sql in
+    Lwt.return_unit
+  in
+
+  let rows = generate_compression_batch_data_float count in
+  let columns = [("id", "int32"); ("name", "string"); ("value", "float64")] in
+
+  let* (_, elapsed) = time_it_lwt (sprintf "COMPRESSION_BATCH_INSERT_F64_%d_ROWS" count) (fun () ->
+    Client.insert_rows ~columns client table_name rows
+  ) in
+
+  let* verified = verify_count client table_name ~expected:count in
+  let rate = float_of_int count /. elapsed in
+  printf "compression-f64: %7d rows | %6.2fs | %8.0f rows/s | verified=%b\n%!"
+    count elapsed rate (verified = count);
+
+  let* _ = Client.execute client (sprintf "DROP STREAM IF EXISTS %s" table_name) in
+  Lwt.return rate
+
 let truthy name =
   match Sys.getenv_opt name with
   | Some s -> let v = String.lowercase_ascii (String.trim s) in v = "1" || v = "true" || v = "yes"
@@ -454,6 +500,30 @@ let run_compression_benchmarks () =
     | Some rate -> printf "  %-5s: %10.0f rows/sec\n%!" name rate
     | None -> printf "  %-5s: ❌ failed\n%!" name
   ) insert_results;
+  (* Optionally run Float64 compression benchmarks with COMP_TEST_FLOAT64=1 *)
+  let* () =
+    if truthy "COMP_TEST_FLOAT64" then (
+      printf "\nRunning Float64 compression insert benchmarks (%d rows)...\n%!" test_rows;
+      let* f_results =
+        Lwt_list.map_s (fun (name, method_) ->
+          Lwt.catch
+            (fun () ->
+              let* rate = bench_compression_insert_float ~compression:method_ test_rows in
+              Lwt.return (name, Some rate))
+            (fun ex ->
+              printf "  %s f64 insert failed: %s\n%!" name (Printexc.to_string ex);
+              Lwt.return (name, None))
+        ) comp_methods
+      in
+      printf "\nFloat64 Compression Insert Results:\n%!";
+      List.iter (fun (name, res) ->
+        match res with
+        | Some rate -> printf "  %-5s: %10.0f rows/sec\n%!" name rate
+        | None -> printf "  %-5s: ❌ failed\n%!" name
+      ) f_results;
+      Lwt.return_unit
+    ) else Lwt.return_unit
+  in
   Lwt.return_unit
 
 let run_insert_benchmarks sizes =
