@@ -117,7 +117,7 @@ let send_native_batch inserter (rows: value list list) (columns: (string * strin
             let rec await_header () =
               let* pkt = Connection.receive_packet inserter.connection in
               match pkt with
-              | PData b when b.n_rows = 0 && b.columns <> [] -> Lwt.return_unit
+              | PData b when b.n_rows = 0 && Array.length b.columns > 0 -> Lwt.return_unit
               | PProgress | PProfileInfo | PTotals _ | PExtremes _ | PLog _ -> await_header ()
               | PData _ -> await_header ()
               | PEndOfStream -> Lwt.fail_with "Unexpected EndOfStream before data header"
@@ -151,17 +151,18 @@ let send_native_batch inserter (rows: value list list) (columns: (string * strin
               let cols_arrays = transpose_rows ch in
               let block_columns =
                 List.mapi (fun i (name, type_spec) ->
-                  { Block.name = name; type_spec; data = cols_arrays.(i) }
+                  { Block.name = name; type_spec = type_spec; data = cols_arrays.(i) }
                 ) columns
               in
               let n = if Array.length cols_arrays = 0 then 0 else Array.length cols_arrays.(0) in
-              let data_block = { Block.info = Block_info.{ is_overflows=false; bucket_num = -1 }; columns = block_columns; n_rows = n } in
+              let n_columns = List.length columns in
+              let data_block = { Block.n_columns; n_rows = n; columns = Array.of_list block_columns } in
               Connection.send_data_block inserter.connection data_block
             in
             let* () = Lwt_list.iter_s send_one_chunk chunks in
 
             (* 4. Send an empty block to signify the end of the insert stream. *)
-            let empty_block = { Block.info = Block_info.{ is_overflows=false; bucket_num = -1 }; columns = []; n_rows = 0 } in
+            let empty_block = { Block.n_columns = 0; n_rows = 0; columns = [||] } in
             let* () = Connection.send_data_block inserter.connection empty_block in
 
             (* 5. Wait for the server to acknowledge completion. *)
@@ -174,7 +175,13 @@ let send_native_batch inserter (rows: value list list) (columns: (string * strin
             Lwt_unix.with_timeout inserter.config.response_timeout drain
           )
           (fun exn ->
-            logf "Native insert attempt %d failed: %s\n%!" attempt (Printexc.to_string exn);
+            (match exn with
+             | Errors.Server_exception { code; message; nested } ->
+                 logf "Native insert attempt %d failed: server code=%d msg=%s%s\n%!"
+                   attempt code message (match nested with None->"" | Some s->"; nested="^s)
+             | _ ->
+                 logf "Native insert attempt %d failed: %s\n%!" attempt (Printexc.to_string exn)
+            );
             let delay = inserter.config.retry_delay *. (2. ** float_of_int (attempt - 1)) in
             (* Reset connection before retry to clear any partial state *)
             let* () = Connection.disconnect inserter.connection in

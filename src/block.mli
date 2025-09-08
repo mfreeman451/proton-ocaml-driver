@@ -19,7 +19,7 @@ type column = {
   name: string;
   (** Column name as defined in the table schema *)
   
-  spec: string;
+  type_spec: string;
   (** Type specification (e.g., "String", "Int32", "Array(Float64)") *)
   
   data: Column.value array;
@@ -34,10 +34,10 @@ type column = {
     
     @since 1.0.0 *)
 type t = {
-  num_columns: int;
+  n_columns: int;
   (** Number of columns in the block *)
   
-  num_rows: int;
+  n_rows: int;
   (** Number of rows in the block *)
   
   columns: column array;

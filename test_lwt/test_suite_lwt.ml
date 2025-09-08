@@ -59,7 +59,7 @@ let read_block_from_bytes (bs:bytes) : Block.t =
 let test_uncompressed_block_parse () =
   let bs = build_uncompressed_block ~cols:[ ("c1","String",2) ] in
   match read_block_from_bytes bs with
-  | { Block.n_rows=2; columns=[{ Block.name; type_spec; data }]; _ } ->
+  | { Block.n_rows=2; columns=[| { Block.name; type_spec; data } |]; _ } ->
       Alcotest.(check string) "col name" "c1" name;
       Alcotest.(check string) "type" "String" type_spec;
       Alcotest.(check int) "rows" 2 (Array.length data);
@@ -83,7 +83,7 @@ let test_enum_and_fixedstring () =
   let cols = [ ("e8", "Enum8('A'=1,'B'=2)", 2); ("fs", "FixedString(4)", 2) ] in
   let bs = build_uncompressed_block ~cols in
   match read_block_from_bytes bs with
-  | { Block.n_rows=2; columns=[c1; c2]; _ } ->
+  | { Block.n_rows=2; columns=[| c1; c2 |]; _ } ->
       Alcotest.(check string) "fs type" "FixedString(4)" c2.Block.type_spec;
       ignore c1; ()
   | _ -> Alcotest.fail "Unexpected block"
@@ -105,7 +105,7 @@ let test_lowcardinality_basic () =
   Buffer.add_char buf '\x01'; Buffer.add_char buf '\x02'; Buffer.add_char buf '\x01';
   let bs = Buffer.contents buf |> Bytes.of_string in
   match read_block_from_bytes bs with
-  | { Block.n_rows=3; columns=[c]; _ } ->
+  | { Block.n_rows=3; columns=[| c |]; _ } ->
       Alcotest.(check string) "lc name" "lc" c.Block.name;
       Alcotest.(check string) "lc type" "LowCardinality(String)" c.Block.type_spec
   | _ -> Alcotest.fail "Unexpected LC block"
@@ -122,7 +122,7 @@ let test_lowcardinality_nullable () =
   Buffer.add_char buf '\x00'; Buffer.add_char buf '\x00'; Buffer.add_char buf '\x01';
   let bs = Buffer.contents buf |> Bytes.of_string in
   match read_block_from_bytes bs with
-  | { Block.n_rows=3; columns=[c]; _ } ->
+  | { Block.n_rows=3; columns=[| c |]; _ } ->
       Alcotest.(check string) "type" "LowCardinality(Nullable(String))" c.Block.type_spec
   | _ -> Alcotest.fail "Unexpected LC(N) block"
 
@@ -130,7 +130,7 @@ let test_decimal_formatting () =
   let cols = [ ("d", "Decimal(10,2)", 1) ] in
   let bs = build_uncompressed_block ~cols in
   match read_block_from_bytes bs with
-  | { Block.n_rows=1; columns=[c]; _ } ->
+  | { Block.n_rows=1; columns=[| c |]; _ } ->
       Alcotest.(check string) "type" "Decimal(10,2)" c.Block.type_spec
   | _ -> Alcotest.fail "Unexpected Decimal block"
 
@@ -575,7 +575,7 @@ let test_enum8_parsing () =
   let cols = [ ("status", "Enum8('active'=1,'inactive'=2,'pending'=3)", 3) ] in
   let bs = build_uncompressed_block ~cols in
   match read_block_from_bytes bs with
-  | { Block.n_rows=3; columns=[c]; _ } ->
+  | { Block.n_rows=3; columns=[| c |]; _ } ->
       Alcotest.(check string) "Enum8 type" "Enum8('active'=1,'inactive'=2,'pending'=3)" c.Block.type_spec;
       (match c.Block.data with
       | [| Column.Enum8 ("active", 1); Column.Enum8 ("inactive", 2); Column.Enum8 ("pending", 3) |] -> ()
@@ -586,7 +586,7 @@ let test_enum16_parsing () =
   let cols = [ ("priority", "Enum16('low'=100,'normal'=200,'high'=300)", 2) ] in
   let bs = build_uncompressed_block ~cols in
   match read_block_from_bytes bs with
-  | { Block.n_rows=2; columns=[c]; _ } ->
+  | { Block.n_rows=2; columns=[| c |]; _ } ->
       Alcotest.(check string) "Enum16 type" "Enum16('low'=100,'normal'=200,'high'=300)" c.Block.type_spec;
       (match c.Block.data with
       | [| Column.Enum16 ("low", 100); Column.Enum16 ("normal", 200) |] -> ()
@@ -605,7 +605,7 @@ let test_enum8_negative () =
   Buffer.add_char buf '\xFF'; (* -1 as signed byte *)
   let bs = Buffer.contents buf |> Bytes.of_string in
   match read_block_from_bytes bs with
-  | { Block.n_rows=1; columns=[c]; _ } ->
+  | { Block.n_rows=1; columns=[| c |]; _ } ->
       (match c.Block.data with
       | [| Column.Enum8 ("off", -1) |] -> ()
       | _ -> Alcotest.fail "Expected Enum8 with negative value")
@@ -624,7 +624,7 @@ let test_enum_unknown_values () =
   let bs = build_uncompressed_block ~cols in
   (* The test data generator puts value 1 which should map to 'known' *)
   match read_block_from_bytes bs with
-  | { Block.n_rows=1; columns=[c]; _ } ->
+  | { Block.n_rows=1; columns=[| c |]; _ } ->
       (match c.Block.data with
       | [| Column.Enum8 ("known", 1) |] -> ()
       | _ -> Alcotest.fail "Expected known enum value")

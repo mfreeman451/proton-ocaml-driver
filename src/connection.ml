@@ -156,7 +156,7 @@ let read_uint64_le_lwt read_fn =
                    (logor (shift_left (b 6) 48)
                       (shift_left (b 7) 56)))))))
 
-let read_float64_le_lwt read_fn =
+let[@warning "-32"] read_float64_le_lwt read_fn =
   let+ u = read_uint64_le_lwt read_fn in
   Int64.float_of_bits u
 
@@ -320,46 +320,74 @@ let send_data_block t (block: Block.t) =
     | _ -> failwith "not connected"
   in
   (* Debug info about the outgoing block *)
-  let is_header = (block.n_rows = 0 && List.length block.columns > 0) in
-  let is_terminator = (block.n_rows = 0 && List.length block.columns = 0) in
+  let is_header = (block.n_rows = 0 && Array.length block.columns > 0) in
+  let is_terminator = (block.n_rows = 0 && Array.length block.columns = 0) in
   debugv (fun () -> Printf.printf "[proton] send_data_block: cols=%d rows=%d kind=%s\n"
-    (List.length block.columns) block.n_rows
+    (Array.length block.columns) block.n_rows
     (if is_header then "header" else if is_terminator then "terminator" else "data"));
-  (* Build block payload (info + columns + rows) in a separate buffer. *)
-  let buf_block = Buffer.create 4096 in
-  (* Write block info *)
+  (* Server revision for block info support. *)
   let revision = match t.srv with Some s -> s.revision | None -> failwith "no server revision" in
-  if revision >= Defines.dbms_min_revision_with_block_info then
-    Binary_writer.write_block_info_to_buffer buf_block block.info;
-  
-  (* Write block data *)
-  Binary_writer.write_varint_to_buffer buf_block (List.length block.columns);  (* n_columns *)
-  Binary_writer.write_varint_to_buffer buf_block block.n_rows;                 (* n_rows *)
-  
-  (* Write each column *)
-  List.iter (fun col ->
-    Binary_writer.write_string_to_buffer buf_block col.Block.name;
-    Binary_writer.write_string_to_buffer buf_block col.Block.type_spec;
-    
-    (* Write column data *)
-    for i = 0 to Array.length col.Block.data - 1 do
-      Binary_writer.write_value_to_buffer buf_block col.Block.data.(i)
-    done
-  ) block.columns;
   (* Build packet header and table name; coalesce write with payload *)
   let hdr = Buffer.create 32 in
   Binary_writer.write_varint_to_buffer hdr (Protocol.client_packet_to_int Protocol.Data);
   Binary_writer.write_string_to_buffer hdr "";
   let hdr_s = Buffer.contents hdr in
-  (* Send block payload (compressed if enabled) in a single writev with header *)
-  let payload_s = Buffer.contents buf_block in
   match t.compression with
   | Compress.None ->
+      (* Build entire payload in memory for uncompressed case. *)
+      let buf_block = Buffer.create 4096 in
+      if revision >= Defines.dbms_min_revision_with_block_info then
+        Binary_writer.write_block_info_to_buffer buf_block Block_info.{ is_overflows=false; bucket_num = -1 };
+      Binary_writer.write_varint_to_buffer buf_block (Array.length block.columns);
+      Binary_writer.write_varint_to_buffer buf_block block.n_rows;
+      Array.iter (fun col ->
+        Binary_writer.write_string_to_buffer buf_block col.Block.name;
+        Binary_writer.write_string_to_buffer buf_block col.Block.type_spec;
+        for i = 0 to Array.length col.Block.data - 1 do
+          Binary_writer.write_value_to_buffer buf_block col.Block.data.(i)
+        done
+      ) block.columns;
+      let payload_s = Buffer.contents buf_block in
       writev_fn [hdr_s; payload_s]
   | cmpr ->
-      let writev_with_hdr parts = writev_fn (hdr_s :: parts) in
-      let payload_b = Bytes.unsafe_of_string payload_s in
-      Compress.write_compressed_block_lwt writev_with_hdr payload_b cmpr
+      (* Write header once, then stream frames. *)
+      let* () = writev_fn [hdr_s] in
+      let cs = Compress.Stream.create writev_fn cmpr in
+      (* Write block info if supported by server revision. *)
+      let revision = match t.srv with Some s -> s.revision | None -> 0 in
+      let* () =
+        if revision >= Defines.dbms_min_revision_with_block_info then (
+          let b = Buffer.create 16 in
+          Binary_writer.write_block_info_to_buffer b Block_info.{ is_overflows=false; bucket_num = -1 };
+          Compress.Stream.write_string cs (Buffer.contents b)
+        ) else Lwt.return_unit
+      in
+      (* n_columns, n_rows *)
+      let b_hdr = Buffer.create 16 in
+      Binary_writer.write_varint_to_buffer b_hdr (Array.length block.columns);
+      Binary_writer.write_varint_to_buffer b_hdr block.n_rows;
+      let* () = Compress.Stream.write_string cs (Buffer.contents b_hdr) in
+      (* columns: names, types, values *)
+      let* () =
+        Lwt_list.iter_s (fun col ->
+          let bmeta = Buffer.create 64 in
+          Binary_writer.write_string_to_buffer bmeta col.Block.name;
+          Binary_writer.write_string_to_buffer bmeta col.Block.type_spec;
+          let* () = Compress.Stream.write_string cs (Buffer.contents bmeta) in
+          (* Stream each value *)
+          let rec loop i =
+            if i = Array.length col.Block.data then Lwt.return_unit
+            else (
+              let vb = Buffer.create 32 in
+              Binary_writer.write_value_to_buffer vb col.Block.data.(i);
+              let* () = Compress.Stream.write_string cs (Buffer.contents vb) in
+              loop (i+1)
+            )
+          in
+          loop 0
+        ) (Array.to_list block.columns)
+      in
+      Compress.Stream.flush cs
 
 let send_query t ?(query_id="") (query:string) =
   let* () = force_connect t in
@@ -405,7 +433,7 @@ let send_query t ?(query_id="") (query:string) =
   write_varint_int_to_buffer buf (String.length query); Buffer.add_string buf query;
   let* () = write_buf writev_fn buf in
   (* Per Proton/ClickHouse protocol, send an empty Data block to indicate no external tables / end of data. *)
-  let empty_block = { Block.info = { Block_info.is_overflows=false; bucket_num = -1 }; columns = []; n_rows = 0 } in
+  let empty_block = { Block.n_columns = 0; n_rows = 0; columns = [||] } in
   send_data_block t empty_block
 
 (* Variant used for INSERT via native protocol: do NOT send the trailing
@@ -458,7 +486,7 @@ let send_query_without_data_end t ?(query_id="") (query:string) =
      of external tables: send a zero-column, zero-row Data block first. Then
      the client will send the header, data block(s), and a final terminator. *)
   let* () = write_buf writev_fn buf in
-  let empty_block = { Block.info = { Block_info.is_overflows=false; bucket_num = -1 }; columns = []; n_rows = 0 } in
+  let empty_block = { Block.n_columns = 0; n_rows = 0; columns = [||] } in
   send_data_block t empty_block
 
 let read_progress t read_fn =
@@ -487,17 +515,52 @@ let read_compressed_block_lwt read_fn : bytes Lwt.t =
   let open Compress in
   let header_len = header_size in
   let* header = lwt_read_exact read_fn header_len in
-  let method_byte = Char.code (Bytes.get header checksum_size) in
-  let compressed_size = Binary.bytes_get_int32_le header (checksum_size + 1) |> Int32.to_int in
-  let uncompressed_size = Binary.bytes_get_int32_le header (checksum_size + 5) |> Int32.to_int in
+  (* Try both header interpretations: method-first and sizes-first. *)
+  let meth_mf = Char.code (Bytes.get header checksum_size) in
+  let comp_mf = Binary.bytes_get_int32_le header (checksum_size + 1) |> Int32.to_int in
+  let uncomp_mf = Binary.bytes_get_int32_le header (checksum_size + 5) |> Int32.to_int in
+
+  let meth_sf = Char.code (Bytes.get header (checksum_size + 8)) in
+  let comp_sf = Binary.bytes_get_int32_le header checksum_size |> Int32.to_int in
+  let uncomp_sf = Binary.bytes_get_int32_le header (checksum_size + 4) |> Int32.to_int in
+
+  let is_method b = (b = 0x02 || b = 0x82 || b = 0x90) in
+  let method_byte, compressed_size, uncompressed_size =
+    if is_method meth_mf && comp_mf >= compress_header_size && uncomp_mf >= 0 then
+      (meth_mf, comp_mf, uncomp_mf)
+    else if is_method meth_sf && comp_sf >= compress_header_size && uncomp_sf >= 0 then
+      (meth_sf, comp_sf, uncomp_sf)
+    else
+      raise (Compression_error "Invalid compressed block header")
+  in
   let payload_size = compressed_size - compress_header_size in
   let* payload = lwt_read_exact read_fn payload_size in
-  let calculated_checksum =
-    Cityhash.cityhash128_2sub header checksum_size compress_header_size payload 0 payload_size
-    |> Cityhash.to_bytes
-  in
+  (* Build the contiguous slice we hash on write: [method|sizes|payload] *)
+  let to_hash_len = compress_header_size + payload_size in
+  let to_hash = Bytes.create to_hash_len in
+  Bytes.blit header checksum_size to_hash 0 compress_header_size;
+  Bytes.blit payload 0 to_hash compress_header_size payload_size;
+  let h_cxx = Cityhash.cityhash128 to_hash in
+  let calc_cxx = Cityhash.to_bytes h_cxx in
   let received_checksum = Bytes.sub header 0 checksum_size in
-  if not (Bytes.equal calculated_checksum received_checksum) then Lwt.fail (Compression_error "Compression checksum verification failed")
+  if not (Bytes.equal calc_cxx received_checksum) then (
+    if env_debug_enabled () then (
+      let hex b =
+        let len = Bytes.length b in
+        let out = Bytes.create (2*len) in
+        let hexdig = "0123456789abcdef" in
+        for i=0 to len-1 do
+          let v = Char.code (Bytes.get b i) in
+          Bytes.set out (2*i) (String.unsafe_get hexdig ((v lsr 4) land 0xF));
+          Bytes.set out (2*i+1) (String.unsafe_get hexdig (v land 0xF));
+        done; Bytes.unsafe_to_string out
+      in
+      Printf.printf "[decompress] checksum mismatch: recv=%s calccxx=%s hdr=%s hash_len=%d\n%!"
+        (hex received_checksum) (hex calc_cxx)
+        (hex (Bytes.sub header checksum_size compress_header_size)) to_hash_len
+    );
+    Lwt.fail (Compression_error "Compression checksum verification failed")
+  )
   else (
     match method_of_byte method_byte with
     | None -> Lwt.return payload
@@ -576,7 +639,7 @@ let read_uncompressed_block_lwt read_fn : bytes Lwt.t =
   let* () = copy_columns 0 in
   Lwt.return (Buffer.to_bytes buf)
 
-let rec read_all_remaining read_fn acc =
+let[@warning "-32"] rec read_all_remaining read_fn acc =
   (* Helper to read all remaining data from stream into accumulator *)
   let chunk = Bytes.create 8192 in
   let* n = read_fn chunk 0 8192 in
@@ -641,7 +704,7 @@ let receive_packet t : packet Lwt.t =
   | SProfileEvents -> let+ _ = receive_data_block t ~compressible:false read_fn in PProgress
   | SHello | SPong | STablesStatusResponse -> Lwt.return PProgress
 
-let read_exception_from_bytes (bs:bytes) : exn Lwt.t =
+let[@warning "-32"] read_exception_from_bytes (bs:bytes) : exn Lwt.t =
   let pos = ref 0 in
   let read_fn buf off len =
     let remaining = Bytes.length bs - !pos in

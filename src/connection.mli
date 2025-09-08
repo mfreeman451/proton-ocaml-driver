@@ -246,6 +246,12 @@ val send_data_block : t -> Block.t -> unit Lwt.t
     @since 1.0.0 *)
 val receive_packet : t -> packet Lwt.t
 
+(** Test helper: parse a server exception packet from raw bytes. *)
+val read_exception_from_bytes : bytes -> exn Lwt.t
+
+(** Test helper: read a compressed block payload using the same logic as the connection. *)
+val read_compressed_block_lwt : (bytes -> int -> int -> int Lwt.t) -> bytes Lwt.t
+
 (** {2 Protocol Functions} *)
 
 (** [send_hello conn] sends the client handshake message.
