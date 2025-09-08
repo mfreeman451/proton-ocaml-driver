@@ -1,0 +1,55 @@
+# User configuration with authentication
+profiles:
+  default:
+    max_memory_usage: 10000000000
+    load_balancing: random
+  
+  readonly:
+    readonly: 1
+
+users:
+  # Default user (no password) for backward compatibility
+  default:
+    password: ''
+    networks:
+      - ip: '::/0'
+    profile: default
+    quota: default
+    allow_databases:
+      - database: default
+    default_database: default
+  
+  # Authenticated user for TLS connections
+  proton_user:
+    # Password: proton_ocaml_test
+    password_sha256_hex: '7a214cfa8c6a3aed591c6dcdda9e7b1247136fcbf20325b426932f3cbafae3ef'
+    networks:
+      - ip: '::/0'
+    profile: default
+    quota: default
+    access_management: 1
+    allow_databases:
+      - database: default
+    default_database: default
+  
+  # Read-only user for testing
+  readonly_user:
+    # Password: readonly_test  
+    password_sha256_hex: '4e4804e9bbeccaca3e0e31f4e82fc64946d0b0ee747c06201846d0914ac67702'
+    networks:
+      - ip: '::/0'
+    profile: readonly
+    quota: default
+    allow_databases:
+      - database: default
+    default_database: default
+
+quotas:
+  default:
+    interval:
+      - duration: 3600
+        queries: 0
+        errors: 0
+        result_rows: 0
+        read_rows: 0
+        execution_time: 0

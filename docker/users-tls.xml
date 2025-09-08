@@ -1,0 +1,84 @@
+<?xml version="1.0"?>
+<proton>
+    <!-- Profiles of settings. -->
+    <profiles>
+        <!-- Default settings. -->
+        <default>
+            <max_memory_usage>10000000000</max_memory_usage>
+            <load_balancing>random</load_balancing>
+        </default>
+
+        <!-- Profile that allows only read queries. -->
+        <readonly>
+            <readonly>1</readonly>
+        </readonly>
+    </profiles>
+
+    <!-- Users and ACL. -->
+    <users>
+        <!-- Default user for backwards compatibility (non-TLS mode) -->
+        <default>
+            <password></password>
+            <networks>
+                <ip>::/0</ip>
+            </networks>
+            <profile>default</profile>
+            <quota>default</quota>
+        </default>
+        
+        <!-- Authenticated user for TLS connections -->
+        <proton_user>
+            <!-- Password: proton_ocaml_test -->
+            <!-- Generated with: echo -n "proton_ocaml_test" | sha256sum -->
+            <password_sha256_hex>7a214cfa8c6a3aed591c6dcdda9e7b1247136fcbf20325b426932f3cbafae3ef</password_sha256_hex>
+            
+            <networks>
+                <ip>::/0</ip>
+            </networks>
+            
+            <profile>default</profile>
+            <quota>default</quota>
+            
+            <!-- Grant full access -->
+            <access_management>1</access_management>
+            
+            <databases>
+                <default>
+                    <allow_ddl>1</allow_ddl>
+                </default>
+            </databases>
+        </proton_user>
+        
+        <!-- Read-only user for testing -->
+        <readonly_user>
+            <!-- Password: readonly_test -->
+            <password_sha256_hex>4e4804e9bbeccaca3e0e31f4e82fc64946d0b0ee747c06201846d0914ac67702</password_sha256_hex>
+            
+            <networks>
+                <ip>::/0</ip>
+            </networks>
+            
+            <profile>readonly</profile>
+            <quota>default</quota>
+        </readonly_user>
+    </users>
+
+    <!-- Quotas. -->
+    <quotas>
+        <!-- Name of quota. -->
+        <default>
+            <!-- Limits for time interval. You could specify many intervals with different limits. -->
+            <interval>
+                <!-- Length of interval. -->
+                <duration>3600</duration>
+
+                <!-- No limits. Just calculate resource usage for time interval. -->
+                <queries>0</queries>
+                <errors>0</errors>
+                <result_rows>0</result_rows>
+                <read_rows>0</read_rows>
+                <execution_time>0</execution_time>
+            </interval>
+        </default>
+    </quotas>
+</proton>

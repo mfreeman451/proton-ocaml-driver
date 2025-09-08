@@ -1,0 +1,30 @@
+# Proton with TLS configuration
+FROM ghcr.io/timeplus-io/proton:latest
+
+# Install required tools
+RUN apt-get update && \
+    apt-get install -y openssl && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create necessary directories
+RUN mkdir -p /etc/proton-server/certs /var/lib/proton /var/log/proton-server
+
+# Copy certificates (will be mounted from host)
+# Note: Certificates are generated on the host and mounted as volumes
+
+# Copy configuration files
+COPY docker/proton-config-tls.xml /etc/proton-server/config.xml
+COPY docker/users-tls.xml /etc/proton-server/users.xml
+
+# Expose TLS ports
+EXPOSE 8123 8463 8443 9440
+
+# Switch to timeplus user (the user that proton runs as)
+USER timeplus
+
+# Health check using TLS port
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=5 \
+    CMD proton-client --host localhost --port 8463 --query "SELECT 1" || exit 1
+
+ENTRYPOINT ["proton-server"]
+CMD ["--config-file=/etc/proton-server/config.xml"]
