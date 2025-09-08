@@ -41,6 +41,6 @@ proton-rust-client
 proton-go-driver
 
 .vscode
-dev-tools.lock
+dev-tools.locks
 docker/certs/
 certs
