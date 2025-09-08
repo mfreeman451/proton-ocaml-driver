@@ -43,3 +43,4 @@ proton-go-driver
 .vscode
 dev-tools.lock
 docker/certs/
+certs
