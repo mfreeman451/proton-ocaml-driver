@@ -20,6 +20,3 @@ let read_varint ic : int64 =
 
 let write_varint_int oc (n:int) = write_varint oc (Int64.of_int n)
 let read_varint_int ic : int = Int64.to_int (read_varint ic)
-
-(* Bytes-reader variants *)
-(* bytes-reader variants are implemented in Binary to avoid module cycles *)

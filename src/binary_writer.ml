@@ -1,5 +1,3 @@
-(* Removed unused open Binary *)
-
 let write_varint_to_buffer buf n =
   let rec loop n =
     if n >= 128 then (
