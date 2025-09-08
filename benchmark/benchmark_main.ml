@@ -1,8 +1,87 @@
 open Proton
 open Printf
 
-let host = "127.0.0.1"
-let port = 8463
+(* 
+ * Proton OCaml Driver Benchmark Tool
+ * 
+ * Environment Variables:
+ *   Connection:
+ *     PROTON_HOST=<host>              (default: 127.0.0.1)
+ *     PROTON_PORT=<port>              (default: 8463)
+ *     PROTON_USER=<username>          (optional)
+ *     PROTON_PASSWORD=<password>      (optional)
+ *   
+ *   TLS Configuration:
+ *     PROTON_TLS=1                    (enable TLS, default: disabled)
+ *     PROTON_CA_CERT=<ca.pem>         (CA certificate file)
+ *     PROTON_CLIENT_CERT=<client.pem> (client certificate file)
+ *     PROTON_CLIENT_KEY=<client.key>  (client private key file)
+ *     PROTON_VERIFY_HOSTNAME=0        (disable hostname verification, default: enabled)
+ *   
+ *   Test Control:
+ *     ONLY_READER_MICRO=1             (run only local micro-benchmarks)
+ *     ONLY_COMPRESSION=1              (run only compression benchmarks)
+ *     SKIP_INSERT=1                   (skip insert benchmarks)
+ *     SKIP_STREAMING=1                (skip streaming benchmarks)
+ *     SKIP_COMPRESSION=1              (skip compression benchmarks)
+ *     SKIP_MILLION=1                  (skip 1M row challenge)
+ *
+ * Examples:
+ *   # Run with TLS authentication:
+ *   PROTON_TLS=1 PROTON_HOST=localhost PROTON_PORT=9440 \
+ *   PROTON_USER=proton_user PROTON_PASSWORD=proton_ocaml_test \
+ *   PROTON_CA_CERT=docker/certs/ca.pem \
+ *   PROTON_CLIENT_CERT=docker/certs/client.pem \
+ *   PROTON_CLIENT_KEY=docker/certs/client-key.pem \
+ *   PROTON_VERIFY_HOSTNAME=0 \
+ *   dune exec benchmark/benchmark_main.exe
+ *)
+
+(* Connection configuration - can be overridden by environment variables *)
+let host = match Sys.getenv_opt "PROTON_HOST" with Some h -> h | None -> "127.0.0.1"
+let port = match Sys.getenv_opt "PROTON_PORT" with Some p -> int_of_string p | None -> 8463
+let user = Sys.getenv_opt "PROTON_USER"
+let password = Sys.getenv_opt "PROTON_PASSWORD"
+
+(* TLS configuration *)
+let use_tls = match Sys.getenv_opt "PROTON_TLS" with
+  | Some ("1"|"true"|"TRUE"|"yes"|"YES") -> true
+  | _ -> false
+
+let tls_config = 
+  if use_tls then
+    let ca_cert = Sys.getenv_opt "PROTON_CA_CERT" in
+    let client_cert = Sys.getenv_opt "PROTON_CLIENT_CERT" in
+    let client_key = Sys.getenv_opt "PROTON_CLIENT_KEY" in
+    let verify_hostname = match Sys.getenv_opt "PROTON_VERIFY_HOSTNAME" with
+      | Some ("0"|"false"|"FALSE"|"no"|"NO") -> false
+      | _ -> true
+    in
+    Some (Connection.{
+      enable_tls = true;
+      ca_cert_file = ca_cert;
+      client_cert_file = client_cert;
+      client_key_file = client_key;
+      verify_hostname = verify_hostname;
+      insecure_skip_verify = not verify_hostname;
+    })
+  else None
+
+(* Helper function to create clients with consistent configuration *)
+let create_client ?(compression=Compress.None) () =
+  Client.create ~host ~port ?user ?password ?tls_config ~compression ()
+
+let create_connection ?(compression=Compress.None) () =
+  Connection.create ~host ~port ?user ?password ?tls_config ~compression ()
+
+(* Print connection info *)
+let print_connection_info () =
+  let tls_status = if use_tls then "TLS enabled" else "TLS disabled" in
+  let auth_status = match user with
+    | Some u -> sprintf "User: %s" u
+    | None -> "No authentication"
+  in
+  printf "Connection: %s:%d | %s | %s\n%!" host port tls_status auth_status
 
 (* -------- Reader micro-benchmarks (cache effectiveness) -------- *)
 
@@ -195,7 +274,7 @@ let verify_count client table_name ~expected =
 (* Benchmark: Async batch insert *)
 let bench_async_batch_insert ?(compression=Compress.None) count =
   let open Lwt.Syntax in
-  let client = Client.create ~host ~port ~compression () in
+  let client = create_client ~compression () in
 
   let table_name = sprintf "bench_async_%d" (Random.int 100000) in
   
@@ -234,12 +313,12 @@ let bench_async_batch_insert ?(compression=Compress.None) count =
 (* Benchmark: Manual async insert with custom config *)
 let bench_manual_async_insert ?(compression=Compress.None) count batch_size =
   let open Lwt.Syntax in
-  let conn = Connection.create ~host ~port ~compression () in
+  let conn = create_connection ~compression () in
 
   let table_name = sprintf "bench_manual_%d" (Random.int 100000) in
   
   (* Silent setup to keep output clean *)
-  let client = Client.create ~host ~port ~compression () in
+  let client = create_client ~compression () in
   let* () = 
     let drop_sql = sprintf "DROP STREAM IF EXISTS %s" table_name in
     let create_sql = sprintf {|
@@ -271,7 +350,7 @@ let bench_manual_async_insert ?(compression=Compress.None) count batch_size =
   ) in
   
   (* Verify rows actually inserted (poll) *)
-  let* client2 = Lwt.return (Client.create ~host ~port () ) in
+  let* client2 = Lwt.return (create_client () ) in
   let* verified = verify_count client2 table_name ~expected:count in
   let rate = float_of_int count /. elapsed in
   printf "manual-async: %7d rows (batch=%4d) | %6.2fs | %8.0f rows/s | verified=%b\n%!"
@@ -283,7 +362,7 @@ let bench_manual_async_insert ?(compression=Compress.None) count batch_size =
 (* Benchmark: Streaming read with live data injection *)
 let bench_live_streaming_read ?(compression=Compress.None) count =
   let open Lwt.Syntax in
-  let client = Client.create ~host ~port ~compression () in
+  let client = create_client ~compression () in
   let table_name = sprintf "bench_stream_%d" (Random.int 100000) in
   
   printf "Setting up streaming table for %d row live read test...\n%!" count;
@@ -305,7 +384,7 @@ let bench_live_streaming_read ?(compression=Compress.None) count =
   printf "Starting live streaming read (will inject %d rows)...\n%!" count;
   
   (* Start streaming connection FIRST *)
-  let conn = Connection.create ~host ~port ~compression () in
+  let conn = create_connection ~compression () in
   let query = sprintf "SELECT id, name, value FROM %s" table_name in
   let* () = Connection.send_query conn query in
   
@@ -363,7 +442,7 @@ let bench_live_streaming_read ?(compression=Compress.None) count =
 (* Compression-specific benchmark with compression-friendly data *)
 let bench_compression_insert ?(compression=Compress.None) count =
   let open Lwt.Syntax in
-  let client = Client.create ~host ~port ~compression () in
+  let client = create_client ~compression () in
 
   let table_name = sprintf "bench_compression_%d" (Random.int 100000) in
   
@@ -402,7 +481,7 @@ let bench_compression_insert ?(compression=Compress.None) count =
 (* Float64 variant to exercise floating-point payloads under compression *)
 let bench_compression_insert_float ?(compression=Compress.None) count =
   let open Lwt.Syntax in
-  let client = Client.create ~host ~port ~compression () in
+  let client = create_client ~compression () in
 
   let table_name = sprintf "bench_compression_f64_%d" (Random.int 100000) in
   
@@ -464,7 +543,7 @@ let run_compression_benchmarks () =
         Lwt_list.map_s (fun (name, method_) ->
           Lwt.catch 
             (fun () ->
-              let client = Client.create ~host ~port ~compression:method_ () in
+              let client = create_client ~compression:method_ () in
               let* _ = Client.execute client "SELECT 1 as test" in
               printf "✅ %s connectivity test passed\n%!" name;
               Lwt.return (name, true))
@@ -610,6 +689,10 @@ let run_benchmarks () =
   let open Lwt.Syntax in
   Random.self_init ();
   printf "=== 🚀 Proton OCaml Driver ASYNC Performance Benchmarks 🚀 ===\n\n%!";
+  
+  (* Print connection configuration *)
+  print_connection_info ();
+  printf "\n%!";
   (* Run local micro-benchmarks first (no server needed) *)
   run_reader_micro_benchmarks ();
   (* Allow running only the reader micro-benchmarks via env var *)
@@ -625,7 +708,7 @@ let run_benchmarks () =
   printf "Testing connection to %s:%d...\n%!" host port;
   let* () = 
     Lwt.catch (fun () ->
-      let client = Client.create ~host ~port () in
+      let client = create_client () in
       let* _ = Client.execute client "SELECT 1" in
       printf "✅ Connection successful!\n\n%!";
       Lwt.return_unit

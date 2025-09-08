@@ -1,0 +1,30 @@
+# TLS test configuration for Proton
+services:
+  proton-tls:
+    image: ghcr.io/timeplus-io/proton:latest
+    container_name: proton-tls-test
+    ports:
+      - "3218:3218"  # HTTP port (Proton default)
+      - "8123:8123"  # Snapshot HTTP port
+      - "8463:8463"  # Native TCP port
+      - "8443:8443"  # HTTPS port (with TLS)
+      - "9440:9440"  # Native TCP secure port (with TLS)
+    volumes:
+      - proton-tls-data:/var/lib/proton
+      - ./docker/base-config.yaml:/etc/proton-server/config.yaml:ro
+      - ./docker/users-tls.yaml:/etc/proton-server/users.yaml:ro
+      - ./docker/openssl.xml:/etc/proton-server/config.d/openssl.xml:ro
+      - ./docker/certs:/etc/proton-server/certs:ro
+    environment:
+      - PROTON_LOG_LEVEL=trace
+    networks:
+      - proton-net
+    restart: unless-stopped
+
+networks:
+  proton-net:
+    driver: bridge
+
+volumes:
+  proton-tls-data:
+    driver: local
