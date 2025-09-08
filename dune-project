@@ -1,6 +1,6 @@
 (lang dune 3.11)
 (name proton)
-(version 1.0.1)
+(version 1.0.3)
 (generate_opam_files true)
 (implicit_transitive_deps true)
 
@@ -23,9 +23,8 @@
   tls
   tls-lwt
   ca-certs
-  x509
+  (x509 (>= 1.0.0))
   ptime
   domain-name
   mirage-crypto
-  (alcotest :with-test)
   (odoc :with-doc)))
