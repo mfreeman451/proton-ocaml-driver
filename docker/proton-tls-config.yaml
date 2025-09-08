@@ -1,0 +1,69 @@
+# Proton configuration with TLS enabled - based on default config
+# Minimal config focusing on TLS ports and certificates
+
+# Standard ports
+http_port: 3218
+snapshot_server_http_port: 8123
+tcp_port: 8463
+snapshot_server_tcp_port: 7587
+
+# TLS ports - these were commented out in default config
+https_port: 8443
+tcp_port_secure: 9440
+
+# Listen on all interfaces
+listen_host: '::'
+
+# Maximum connections
+max_connections: 4096
+keep_alive_timeout: 3
+
+# Database settings
+path: /var/lib/proton/
+tmp_path: /var/lib/proton/tmp/
+user_files_path: /var/lib/proton/user_files/
+format_schema_path: /var/lib/proton/format_schemas/
+
+# User configuration  
+users_config: users.yaml
+default_profile: default
+default_database: default
+
+# OpenSSL Configuration
+openSSL:
+    server:
+        # Use our generated certificates
+        certificateFile: /etc/proton-server/certs/server.pem
+        privateKeyFile: /etc/proton-server/certs/server-key.pem
+        
+        # DH parameters for key exchange
+        dhParamsFile: /etc/proton-server/certs/dhparam.pem
+        
+        # Client certificate verification (for mTLS)
+        caConfig: /etc/proton-server/certs/ca.pem
+        verificationMode: strict
+        
+        # Security settings
+        loadDefaultCAFile: false
+        cacheSessions: true
+        disableProtocols: 'sslv2,sslv3,tlsv1,tlsv1_1'
+        preferServerCiphers: true
+        cipherList: 'ECDHE+AESGCM:ECDHE+AES256:!aNULL:!MD5:!DSS'
+    
+    client:
+        loadDefaultCAFile: false
+        caConfig: /etc/proton-server/certs/ca.pem
+        cacheSessions: true
+        disableProtocols: 'sslv2,sslv3,tlsv1,tlsv1_1'
+        preferServerCiphers: true
+        invalidCertificateHandler:
+            name: RejectCertificateHandler
+
+# Basic logging
+logger:
+    level: trace
+    console: 1
+
+# Essential settings
+timezone: UTC
+builtin_dictionaries_reload_interval: 3600

@@ -1,0 +1,25 @@
+<proton>
+    <openSSL>
+        <server>
+            <certificateFile>/etc/proton-server/certs/server.pem</certificateFile>
+            <privateKeyFile>/etc/proton-server/certs/server-key.pem</privateKeyFile>
+            <dhParamsFile>/etc/proton-server/certs/dhparam.pem</dhParamsFile>
+            <caConfig>/etc/proton-server/certs/ca.pem</caConfig>
+            <verificationMode>strict</verificationMode>
+            <loadDefaultCAFile>false</loadDefaultCAFile>
+            <cacheSessions>true</cacheSessions>
+            <disableProtocols>sslv2,sslv3,tlsv1,tlsv1_1</disableProtocols>
+            <preferServerCiphers>true</preferServerCiphers>
+        </server>
+        <client>
+            <loadDefaultCAFile>false</loadDefaultCAFile>
+            <caConfig>/etc/proton-server/certs/ca.pem</caConfig>
+            <cacheSessions>true</cacheSessions>
+            <disableProtocols>sslv2,sslv3,tlsv1,tlsv1_1</disableProtocols>
+            <preferServerCiphers>true</preferServerCiphers>
+            <invalidCertificateHandler>
+                <name>RejectCertificateHandler</name>
+            </invalidCertificateHandler>
+        </client>
+    </openSSL>
+</proton>
