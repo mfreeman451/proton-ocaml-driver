@@ -1,0 +1,30 @@
+# Simplified Proton with TLS - using base image directly
+version: '3.8'
+
+services:
+  # Proton Database with TLS (using base image)
+  proton-tls:
+    image: ghcr.io/timeplus-io/proton:latest
+    container_name: proton-tls-simple
+    ports:
+      - "8124:8123"  # HTTP port
+      - "8464:8463"  # Native TCP port
+      - "8443:8443"  # HTTPS port (with TLS)
+      - "9440:9440"  # Native TCP secure port (with TLS)
+    volumes:
+      - proton-tls-data:/var/lib/proton
+      - ./docker/config-tls.yaml:/etc/proton-server/config.yaml:ro
+      - ./docker/users-tls.yaml:/etc/proton-server/users.yaml:ro
+      - ./docker/certs:/etc/proton-server/certs:ro
+    environment:
+      - PROTON_LOG_LEVEL=trace  # Set to trace to debug TLS issues
+    networks:
+      - proton-net
+
+networks:
+  proton-net:
+    driver: bridge
+
+volumes:
+  proton-tls-data:
+    driver: local

@@ -1,0 +1,23 @@
+# Proton with authentication (no TLS for now)
+services:
+  proton-auth:
+    image: ghcr.io/timeplus-io/proton:latest
+    container_name: proton-auth
+    ports:
+      - "8125:3218"  # HTTP port (Proton default)
+      - "8465:8463"  # Native TCP port
+    volumes:
+      - proton-auth-data:/var/lib/proton
+      - ./docker/users-tls.yaml:/etc/proton-server/users.yaml:ro
+    environment:
+      - PROTON_LOG_LEVEL=trace
+    networks:
+      - proton-net
+
+networks:
+  proton-net:
+    driver: bridge
+
+volumes:
+  proton-auth-data:
+    driver: local
