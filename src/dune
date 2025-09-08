@@ -8,4 +8,4 @@
   (language cxx)
   (names cityhash_stubs cityhash102_cc)
   (flags -std=c++20)
-  (include_dirs ../ClickHouse/contrib/cityhash102/include ../ClickHouse/contrib/cityhash102/src)))
+  (include_dirs ../vendor/cityhash102/include ../vendor/cityhash102/src)))
