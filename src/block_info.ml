@@ -1,5 +1,3 @@
-(* Removed unused opens - Varint and Binary *)
-
 type t = {
   mutable is_overflows : bool;
   mutable bucket_num : int;

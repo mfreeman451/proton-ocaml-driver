@@ -1,5 +1,4 @@
 open Errors
-(* Removed unused open Binary *)
 
 (* Mirrors proton_driver/readhelpers.read_exception *)
 let rec read_exception ic : exn =
