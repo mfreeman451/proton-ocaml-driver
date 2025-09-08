@@ -23,7 +23,7 @@
   tls
   tls-lwt
   ca-certs
-  x509
+  (x509 (>= 1.0.0))
   ptime
   domain-name
   mirage-crypto
