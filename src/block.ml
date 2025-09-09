@@ -1,6 +1,5 @@
 open Varint
 open Binary
-(* Block_info is fully qualified in usage *)
 open Column
 
 type column = {
