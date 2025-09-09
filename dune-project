@@ -1,6 +1,6 @@
 (lang dune 3.11)
 (name proton)
-(version 1.0.1)
+(version 1.0.7)
 (generate_opam_files true)
 (implicit_transitive_deps true)
 
@@ -18,6 +18,7 @@
   (ocaml (>= 4.14.0))
   lz4
   zstd
+  cstruct
   lwt
   lwt_ppx
   tls
