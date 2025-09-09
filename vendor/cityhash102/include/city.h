@@ -74,7 +74,9 @@ struct uint128
     uint128() = default;
     uint128(uint64 low64_, uint64 high64_) : low64(low64_), high64(high64_) {}
 
+#if defined(__cpp_impl_three_way_comparison) || (__cplusplus >= 202002L)
     friend auto operator<=>(const uint128 &, const uint128 &) = default;
+#endif
 };
 
 inline uint64 Uint128Low64(const uint128 & x) { return x.low64; }
@@ -115,4 +117,3 @@ inline uint64 Hash128to64(const uint128& x) {
 }
 
 #endif  // CITY_HASH_H_
-
