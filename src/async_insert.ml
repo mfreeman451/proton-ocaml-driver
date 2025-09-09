@@ -1,4 +1,3 @@
-(* file: async_insert.ml *)
 open Lwt.Syntax
 open Column
 

@@ -1,6 +1,5 @@
 open Connection
 open Block
-(* Column used via qualified access *)
 open Lwt.Syntax
 
 type query_result =
