@@ -18,6 +18,7 @@
   (ocaml (>= 4.14.0))
   lz4
   zstd
+  base64
   cstruct
   lwt
   lwt_ppx
