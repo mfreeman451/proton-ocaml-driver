@@ -211,8 +211,8 @@ let connect t =
        | Some cert_file, Some key_file ->
            let cert_pem = read_file cert_file in
            let key_pem = read_file key_file in
-           let certs = match X509.Certificate.decode_pem_multiple cert_pem with Ok cs -> cs | Error (`Msg m) -> failwith m in
-           let key = match X509.Private_key.decode_pem key_pem with Ok k -> k | Error (`Msg m) -> failwith m in
+           let certs = match X509.Certificate.decode_pem_multiple (Cstruct.of_string cert_pem) with Ok cs -> cs | Error (`Msg m) -> failwith m in
+           let key = match X509.Private_key.decode_pem (Cstruct.of_string key_pem) with Ok k -> k | Error (`Msg m) -> failwith m in
            `Single (certs, key)
        | Some _, None | None, Some _ -> raise (Invalid_argument "Both client_cert_file and client_key_file must be set for mTLS")
        | None, None -> `None
