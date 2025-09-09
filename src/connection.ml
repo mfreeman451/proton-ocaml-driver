@@ -211,8 +211,52 @@ let connect t =
        | Some cert_file, Some key_file ->
            let cert_pem = read_file cert_file in
            let key_pem = read_file key_file in
-           let certs = match X509.Certificate.decode_pem_multiple (Cstruct.of_string cert_pem) with Ok cs -> cs | Error (`Msg m) -> failwith m in
-           let key = match X509.Private_key.decode_pem (Cstruct.of_string key_pem) with Ok k -> k | Error (`Msg m) -> failwith m in
+           let remove_ws s = String.concat "" (String.split_on_char '\n' s |> List.map String.trim) in
+           let b64_decode_exn s = Base64.decode_exn (remove_ws s) in
+           let find_blocks pem ~label =
+             let begin_marker = "-----BEGIN " ^ label ^ "-----" in
+             let end_marker = "-----END " ^ label ^ "-----" in
+             let rec collect from acc =
+               match String.index_from_opt pem from '-' with
+               | None -> List.rev acc
+               | Some i when i + String.length begin_marker <= String.length pem && String.sub pem i (String.length begin_marker) = begin_marker ->
+                   let content_start = i + String.length begin_marker in
+                   (* find end marker *)
+                   let rec find_end j =
+                     match String.index_from_opt pem j '-' with
+                     | None -> None
+                     | Some k when k + String.length end_marker <= String.length pem && String.sub pem k (String.length end_marker) = end_marker -> Some k
+                     | Some k -> find_end (k + 1)
+                   in
+                   begin match find_end content_start with
+                   | None -> List.rev acc
+                   | Some k ->
+                       let content = String.sub pem content_start (k - content_start) in
+                       collect (k + String.length end_marker) (content :: acc)
+                   end
+               | Some i -> collect (i + 1) acc
+             in
+             collect 0 []
+           in
+           let cert_blocks = find_blocks cert_pem ~label:"CERTIFICATE" in
+           if cert_blocks = [] then failwith "No CERTIFICATE blocks found in client_cert_file";
+           let certs =
+             cert_blocks
+             |> List.map (fun b -> Cstruct.of_string (b64_decode_exn b))
+             |> List.map (fun der -> match X509.Certificate.decode_der der with Ok c -> c | Error (`Msg m) -> failwith m)
+           in
+           let key_labels = ["PRIVATE KEY"; "RSA PRIVATE KEY"; "EC PRIVATE KEY"] in
+           let rec find_key = function
+             | [] -> None
+             | lab :: tl ->
+                 let blocks = find_blocks key_pem ~label:lab in
+                 match blocks with
+                 | b :: _ -> Some b
+                 | [] -> find_key tl
+           in
+           let key_block = match find_key key_labels with Some b -> b | None -> failwith "No PRIVATE KEY block found in client_key_file" in
+           let key_der = Cstruct.of_string (b64_decode_exn key_block) in
+           let key = match X509.Private_key.decode_der key_der with Ok k -> k | Error (`Msg m) -> failwith m in
            `Single (certs, key)
        | Some _, None | None, Some _ -> raise (Invalid_argument "Both client_cert_file and client_key_file must be set for mTLS")
        | None, None -> `None
