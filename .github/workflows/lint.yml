@@ -19,6 +19,9 @@ jobs:
           dune-cache: true
           allow-prerelease-opam: true
 
+      - name: Install ocamlformat
+        run: opam install ocamlformat
+
       - name: Lint fmt
         uses: ocaml/setup-ocaml/lint-fmt@v3
 
