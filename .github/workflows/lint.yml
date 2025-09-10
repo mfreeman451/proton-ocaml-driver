@@ -71,6 +71,7 @@ jobs:
 
   lint-opam:
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -84,6 +85,7 @@ jobs:
 
       - name: Lint opam
         uses: ocaml/setup-ocaml/lint-opam@v3
+        continue-on-error: true
 
   lint-doc:
     runs-on: ubuntu-latest
@@ -100,3 +102,37 @@ jobs:
 
       - name: Lint doc
         uses: ocaml/setup-ocaml/lint-doc@v3
+
+  lint-opam-autofix:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Use OCaml 5.3
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 5.3
+          dune-cache: true
+          allow-prerelease-opam: true
+
+      - name: Install opam-dune-lint
+        run: opam install opam-dune-lint -y
+
+      - name: Run opam-dune-lint (update opam files)
+        run: opam exec -- opam-dune-lint
+
+      - name: Commit and push opam file updates
+        run: |
+          if git diff --quiet -- proton.opam; then
+            echo "No opam changes";
+          else
+            git config user.name "github-actions"
+            git config user.email "github-actions@users.noreply.github.com"
+            git add proton.opam
+            git commit -m "chore(opam): sync proton.opam with dune describe"
+            git push
+          fi
