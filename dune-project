@@ -1,6 +1,6 @@
 (lang dune 3.11)
 (name proton)
-(version 1.0.11)
+(version 1.0.12)
 (generate_opam_files true)
 (implicit_transitive_deps true)
 
@@ -19,7 +19,6 @@
   lz4
   zstd
   lwt
-  lwt_ppx
   tls
   tls-lwt
   ca-certs
