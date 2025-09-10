@@ -1,6 +1,4 @@
 (executable
  (public_name test_insert_verify)
  (name test_insert_verify)
- (libraries proton lwt unix)
- (preprocess
-  (pps lwt_ppx)))
+ (libraries proton lwt unix))

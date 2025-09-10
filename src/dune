@@ -12,8 +12,6 @@
   lwt.unix
   domain-name
   mirage-crypto)
- (preprocess
-  (pps lwt_ppx))
  (modules
   defines
   protocol
