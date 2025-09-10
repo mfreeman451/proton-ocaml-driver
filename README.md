@@ -1,5 +1,9 @@
 # 🐪 Timeplus Proton OCaml Driver
 
+[![Lint](https://github.com/mfreeman451/proton-ocaml-driver/actions/workflows/lint.yml/badge.svg)](https://github.com/mfreeman451/proton-ocaml-driver/actions/workflows/lint.yml)
+[![Build and Test](https://github.com/mfreeman451/proton-ocaml-driver/actions/workflows/build-test.yml/badge.svg)](https://github.com/mfreeman451/proton-ocaml-driver/actions/workflows/build-test.yml)
+[![Opam Dependency Submission](https://github.com/mfreeman451/proton-ocaml-driver/actions/workflows/opam-dependency-submission.yml/badge.svg)](https://github.com/mfreeman451/proton-ocaml-driver/actions/workflows/opam-dependency-submission.yml)
+
 A high-performance, feature-rich OCaml driver for [Timeplus Proton](https://timeplus.com/) - the streaming database built on ClickHouse.
 
 ## Features
