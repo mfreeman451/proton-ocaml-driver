@@ -5,20 +5,15 @@ open Column
 type column = {
   name : string;
   type_spec : string;
-  data : value array;  (* length = n_rows or empty if header *)
+  data : value array; (* length = n_rows or empty if header *)
 }
 
-type t = {
-  n_columns : int;
-  n_rows : int;
-  columns : column array;
-}
+type t = { n_columns : int; n_rows : int; columns : column array }
 
 let read_block ~revision ic : t =
   let _info =
-    if revision >= Defines.dbms_min_revision_with_block_info
-    then Block_info.read ic
-    else { Block_info.is_overflows=false; bucket_num = -1 }
+    if revision >= Defines.dbms_min_revision_with_block_info then Block_info.read ic
+    else { Block_info.is_overflows = false; bucket_num = -1 }
   in
   let n_columns = read_varint_int ic in
   let n_rows = read_varint_int ic in
@@ -35,7 +30,7 @@ let read_block ~revision ic : t =
             reader ic n_rows
         in
         let c = { name; type_spec; data } in
-        loop (i+1) (c::acc)
+        loop (i + 1) (c :: acc)
     in
     loop 0 []
   in
@@ -43,9 +38,8 @@ let read_block ~revision ic : t =
 
 let read_block_br ~revision br : t =
   let _info =
-    if revision >= Defines.dbms_min_revision_with_block_info
-    then Block_info.read_br br
-    else { Block_info.is_overflows=false; bucket_num = -1 }
+    if revision >= Defines.dbms_min_revision_with_block_info then Block_info.read_br br
+    else { Block_info.is_overflows = false; bucket_num = -1 }
   in
   let n_columns = Binary.read_varint_int_br br in
   let n_rows = Binary.read_varint_int_br br in
@@ -62,13 +56,13 @@ let read_block_br ~revision br : t =
             reader br n_rows
         in
         let c = { name; type_spec; data } in
-        loop (i+1) (c::acc)
+        loop (i + 1) (c :: acc)
     in
     loop 0 []
   in
   { n_columns; n_rows; columns = cols }
 
-let get_rows (b:t) : value list list =
+let get_rows (b : t) : value list list =
   if b.n_rows = 0 then []
   else
     let n_cols = Array.length b.columns in
@@ -83,5 +77,5 @@ let get_rows (b:t) : value list list =
     done;
     !rows
 
-let columns_with_types (b:t) : (string * string) list =
+let columns_with_types (b : t) : (string * string) list =
   Array.to_list (Array.map (fun c -> (c.name, c.type_spec)) b.columns)

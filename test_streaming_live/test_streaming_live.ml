@@ -8,10 +8,7 @@ let random_name () =
 let run () =
   Random.self_init ();
   printf "[live] Connecting to 127.0.0.1:8463...\n%!";
-  let settings = [
-    ("send_logs_level", "none");
-    ("log_profile_events", "0");
-  ] in
+  let settings = [ ("send_logs_level", "none"); ("log_profile_events", "0") ] in
   let client = Client.create ~host:"127.0.0.1" ~port:8463 ~settings () in
 
   let stream = "test_streaming_live" in
@@ -21,7 +18,9 @@ let run () =
   let open Lwt.Syntax in
   let program =
     (* Recreate stream *)
-    let* _ = Lwt.catch (fun () -> Client.execute client drop_stream) (fun _ -> Lwt.return Client.NoRows) in
+    let* _ =
+      Lwt.catch (fun () -> Client.execute client drop_stream) (fun _ -> Lwt.return Client.NoRows)
+    in
     let* _ = Client.execute client create_stream in
     printf "[live] Created stream '%s'\n%!" stream;
 
@@ -36,10 +35,11 @@ let run () =
       match pkt with
       | Connection.PData b ->
           let rows = Block.get_rows b in
-          List.iter (fun row ->
-            let s = String.concat ", " (List.map Column.value_to_string row) in
-            printf "[live] row: %s\n%!" s
-          ) rows;
+          List.iter
+            (fun row ->
+              let s = String.concat ", " (List.map Column.value_to_string row) in
+              printf "[live] row: %s\n%!" s)
+            rows;
           reader_loop ()
       | Connection.PEndOfStream ->
           (* For unbounded streams we don't expect this, but just resubscribe. *)
@@ -53,7 +53,9 @@ let run () =
     let rec inserter_loop () =
       let id = Random.int 1_000_000 in
       let name = random_name () in
-      let sql = Printf.sprintf "INSERT INTO %s (id, name) SELECT to_int32(%d), '%s'" stream id name in
+      let sql =
+        Printf.sprintf "INSERT INTO %s (id, name) SELECT to_int32(%d), '%s'" stream id name
+      in
       let* () =
         Lwt.catch
           (fun () ->
@@ -79,12 +81,12 @@ let run () =
 
     printf "[live] Shutting down...\n%!";
     let* () = Connection.disconnect conn in
-    let* _ = Lwt.catch (fun () -> Client.execute client drop_stream) (fun _ -> Lwt.return Client.NoRows) in
+    let* _ =
+      Lwt.catch (fun () -> Client.execute client drop_stream) (fun _ -> Lwt.return Client.NoRows)
+    in
     printf "[live] Dropped stream and exit.\n%!";
     Lwt.return_unit
   in
   Lwt_main.run program
 
-let () =
-  try run () with
-  | e -> Printf.printf "❌ Exception: %s\n%!" (Printexc.to_string e)
+let () = try run () with e -> Printf.printf "❌ Exception: %s\n%!" (Printexc.to_string e)

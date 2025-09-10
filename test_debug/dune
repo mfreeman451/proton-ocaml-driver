@@ -2,4 +2,5 @@
  (public_name test_debug)
  (name test_debug)
  (libraries proton lwt lwt.unix)
- (preprocess (pps lwt_ppx)))
+ (preprocess
+  (pps lwt_ppx)))

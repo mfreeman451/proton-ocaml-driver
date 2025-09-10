@@ -10,8 +10,8 @@ type server_info = {
 
 type t = {
   mutable server_info : server_info option;
-  mutable settings : (string * string) list;        (* serialized-as-strings path *)
-  mutable client_settings : (string * string) list; 
+  mutable settings : (string * string) list; (* serialized-as-strings path *)
+  mutable client_settings : (string * string) list;
 }
 
-let make () = { server_info=None; settings=[]; client_settings=[] }
+let make () = { server_info = None; settings = []; client_settings = [] }

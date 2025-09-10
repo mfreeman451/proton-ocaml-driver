@@ -1,0 +1,39 @@
+name: Opam Dependency Submission
+
+on:
+  push:
+    branches: [ main, master ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-submission-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  opam-dependency-submission:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+
+      - name: Set-up OCaml 5.3
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 5.3
+          dune-cache: true
+          allow-prerelease-opam: true
+
+      - name: Opam Dependency Submission
+        uses: ocaml/setup-ocaml/analysis@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

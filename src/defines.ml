@@ -3,7 +3,6 @@
 let default_database = "default"
 let default_user = "default"
 let default_password = ""
-
 let default_port = 8463
 let default_secure_port = 9440
 
@@ -31,18 +30,13 @@ let dbms_min_revision_with_parallel_replicas = 54453
 let dbms_default_connect_timeout_sec = 10.
 let dbms_default_timeout_sec = 300.
 let dbms_default_sync_request_timeout_sec = 5.
-
 let default_compress_block_size = 1_048_576
-let default_insert_block_size   = 1_048_576
-
+let default_insert_block_size = 1_048_576
 let dbms_name = "Proton"
-
 let client_name = "ocaml-driver"
 let client_version_major = 20
 let client_version_minor = 10
 let client_version_patch = 2
-let client_revision      = dbms_min_revision_with_parallel_replicas
-
+let client_revision = dbms_min_revision_with_parallel_replicas
 let buffer_size = 1_048_576
-
 let strings_encoding = "UTF-8"
