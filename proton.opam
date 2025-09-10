@@ -20,7 +20,7 @@ depends: [
   "tls"
   "tls-lwt"
   "ca-certs"
-  "x509"
+  "x509" {>= "1.0.0"}
   "cstruct"
   "ptime"
   "domain-name"
