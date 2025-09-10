@@ -24,6 +24,7 @@
   tls-lwt
   ca-certs
   x509
+  cstruct
   ptime
   domain-name
   mirage-crypto
