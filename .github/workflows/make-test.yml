@@ -1,0 +1,48 @@
+name: Make Test
+
+on:
+  - push
+  - pull_request
+
+jobs:
+  make-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - ubuntu-latest
+        ocaml-version:
+          - 4.14
+          - 5.3
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Use OCaml ${{ matrix.ocaml-version }}
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: ${{ matrix.ocaml-version }}
+          dune-cache: true
+          allow-prerelease-opam: true
+
+      - name: Install dependencies
+        run: opam install . --deps-only --with-test
+
+      - name: Build project
+        run: make build
+
+      - name: Run make test
+        run: make test
+
+      - name: Test lower bounds (install with different criteria)
+        run: opam install . --deps-only --with-test --criteria='+removed,+count[version-lag,solution]' --solver=builtin-0install
+
+      - name: Build project with lower bounds
+        run: make build
+
+      - name: Run make test with lower bounds
+        run: make test
