@@ -38,11 +38,12 @@ jobs:
           allow-prerelease-opam: true
 
       - name: Install ocamlformat
-        run: grep '^version' .ocamlformat | cut -d '=' -f 2 | xargs -I V opam install ocamlformat=V
+        run: grep '^version' .ocamlformat | cut -d '=' -f 2 | tr -d ' ' | xargs -I V opam install ocamlformat=V
 
       - name: Format code
         run: |
-          git ls-files '*.ml' '*.mli' | xargs opam exec -- ocamlformat --inplace
+          eval $(opam env)
+          git ls-files '*.ml' '*.mli' | xargs ocamlformat --inplace
 
       - name: Check for modified files
         id: git-check
