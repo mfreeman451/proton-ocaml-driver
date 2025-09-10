@@ -2,22 +2,21 @@ name: Build and Test
 
 on:
   pull_request:
+  push:
+    branches: [ main ]
+
+concurrency:
+  group: ci-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build-and-test:
+  test-pr:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - macos-latest
-          - ubuntu-latest
-          # - windows-latest
-        ocaml-version:
-          - 4.14
-          - 5.3
-
-    runs-on: ${{ matrix.os }}
-
+        ocaml-version: [ 4.14, 5.3 ]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -29,18 +28,53 @@ jobs:
           dune-cache: true
           allow-prerelease-opam: true
 
-      - run: opam install . --deps-only --with-test
+      - name: Install dependencies (with tests)
+        run: opam install . --deps-only --with-test
 
-      - name: build project
+      - name: Build
         run: opam exec -- dune build
 
-      - name: run test
+      - name: Test
         run: opam exec -- dune runtest
 
-      - run: opam install . --deps-only --with-test --criteria='+removed,+count[version-lag,solution]' --solver=builtin-0install
+  test-main:
+    if: github.event_name == 'push'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            ocaml: 4.14
+          - os: ubuntu-latest
+            ocaml: 5.3
+          - os: macos-latest
+            ocaml: 5.3
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: build project with lower bounds
+      - name: Use OCaml ${{ matrix.ocaml }}
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: ${{ matrix.ocaml }}
+          dune-cache: true
+          allow-prerelease-opam: true
+
+      - name: Install dependencies (with tests)
+        run: opam install . --deps-only --with-test
+
+      - name: Build
         run: opam exec -- dune build
 
-      - name: run test with lower bounds
+      - name: Test
+        run: opam exec -- dune runtest
+
+      - name: Install lower bounds
+        run: opam install . --deps-only --with-test --criteria='+removed,+count[version-lag,solution]' --solver=builtin-0install
+
+      - name: Build (lower bounds)
+        run: opam exec -- dune build
+
+      - name: Test (lower bounds)
         run: opam exec -- dune runtest

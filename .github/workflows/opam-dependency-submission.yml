@@ -1,12 +1,24 @@
 name: Opam Dependency Submission
 
 on:
-  - push
-  - pull_request
+  push:
+    branches: [ main, master ]
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-submission-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   opam-dependency-submission:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout tree
         uses: actions/checkout@v4
@@ -20,3 +32,5 @@ jobs:
 
       - name: Opam Dependency Submission
         uses: ocaml/setup-ocaml/analysis@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
