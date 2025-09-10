@@ -40,10 +40,10 @@ let[@inline] read_uint64_le ic =
     (Int64.shift_left (Int64.of_int32 high) 32)
 
 let[@inline] write_uint64_le oc v =
-  let low = Int64.to_int (Int64.logand v 0xFFFFFFFFL) in
-  let high = Int64.to_int (Int64.shift_right_logical v 32) in
-  write_int32_le oc (Int32.of_int low);
-  write_int32_le oc (Int32.of_int high)
+  let low32 = Int64.to_int32 (Int64.logand v 0xFFFFFFFFL) in
+  let high32 = Int64.to_int32 (Int64.shift_right_logical v 32) in
+  write_int32_le oc low32;
+  write_int32_le oc high32
 
 let[@inline] read_float64_le ic =
   let bits = read_uint64_le ic in
@@ -138,10 +138,10 @@ let[@inline] bytes_get_int64_le buf offset =
     (Int64.shift_left (Int64.logand (Int64.of_int32 high) 0xFFFFFFFFL) 32)
 
 let[@inline] bytes_set_int64_le buf offset v =
-  let low = Int64.to_int (Int64.logand v 0xFFFFFFFFL) in
-  let high = Int64.to_int (Int64.shift_right_logical v 32) in
-  bytes_set_int32_le buf offset (Int32.of_int low);
-  bytes_set_int32_le buf (offset + 4) (Int32.of_int high)
+  let low32 = Int64.to_int32 (Int64.logand v 0xFFFFFFFFL) in
+  let high32 = Int64.to_int32 (Int64.shift_right_logical v 32) in
+  bytes_set_int32_le buf offset low32;
+  bytes_set_int32_le buf (offset + 4) high32
 
 let read_int16_le ic =
   let a = input_byte ic in

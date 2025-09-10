@@ -55,6 +55,16 @@
                 <ip>::/0</ip>
             </networks>
         </test_user>
+        
+        <!-- Proton user for benchmarks -->
+        <proton_user>
+            <password>proton_ocaml_test</password>
+            <profile>default</profile>
+            <quota>default</quota>
+            <networks>
+                <ip>::/0</ip>
+            </networks>
+        </proton_user>
     </users>
 
     <quotas>

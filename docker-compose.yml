@@ -25,6 +25,9 @@ services:
       - proton-data:/var/lib/proton
       - ./docker/proton-config.xml:/etc/proton-server/config.xml:ro
       - ./docker/users.xml:/etc/proton-server/users.xml:ro
+      - ./docker/certs/server.pem:/etc/proton-server/server.crt:ro
+      - ./docker/certs/server-key.pem:/etc/proton-server/server.key:ro
+      - ./docker/certs/dhparam.pem:/etc/proton-server/dhparam.pem:ro
     environment:
       - PROTON_LOG_LEVEL=error
       - PROTON_MAX_MEMORY_USAGE_RATIO=0.8
