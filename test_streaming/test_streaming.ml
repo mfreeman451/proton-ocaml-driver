@@ -3,10 +3,7 @@ open Printf
 
 let run () =
   printf "[streaming] Connecting to 127.0.0.1:8463...\n%!";
-  let settings = [
-    ("send_logs_level", "none");
-    ("log_profile_events", "0");
-  ] in
+  let settings = [ ("send_logs_level", "none"); ("log_profile_events", "0") ] in
   let client = Client.create ~host:"127.0.0.1" ~port:8463 ~settings () in
 
   let stream = "test_streaming" in
@@ -16,7 +13,9 @@ let run () =
   let open Lwt.Syntax in
   let program =
     (* Recreate stream *)
-    let* _ = Lwt.catch (fun () -> Client.execute client drop_stream) (fun _ -> Lwt.return Client.NoRows) in
+    let* _ =
+      Lwt.catch (fun () -> Client.execute client drop_stream) (fun _ -> Lwt.return Client.NoRows)
+    in
     let* _ = Client.execute client create_stream in
     printf "[streaming] Created stream '%s'\n%!" stream;
 
@@ -29,28 +28,32 @@ let run () =
     printf "[streaming] Reader subscribed, waiting for rows...\n%!";
 
     let rec reader_loop () =
-      if !printed >= target then Lwt.return_unit else
-      let* pkt = Connection.receive_packet conn in
-      match pkt with
-      | Connection.PData b ->
-          let rows = Block.get_rows b in
-          List.iter (fun row ->
-            if !printed < target then (
-              let s = String.concat ", " (List.map Column.value_to_string row) in
-              printf "[streaming] row: %s\n%!" s;
-              incr printed
-            )
-          ) rows;
-          reader_loop ()
-      | Connection.PEndOfStream -> Lwt.return_unit
-      | _ -> reader_loop ()
+      if !printed >= target then Lwt.return_unit
+      else
+        let* pkt = Connection.receive_packet conn in
+        match pkt with
+        | Connection.PData b ->
+            let rows = Block.get_rows b in
+            List.iter
+              (fun row ->
+                if !printed < target then (
+                  let s = String.concat ", " (List.map Column.value_to_string row) in
+                  printf "[streaming] row: %s\n%!" s;
+                  incr printed))
+              rows;
+            reader_loop ()
+        | Connection.PEndOfStream -> Lwt.return_unit
+        | _ -> reader_loop ()
     in
     let reader = Lwt.catch reader_loop (fun _ -> Lwt.return_unit) in
 
     (* Insert rows with small delays so reader picks them up live *)
     let* () = Lwt_unix.sleep 0.2 in
     let insert_one i name =
-      let* _ = Client.execute client (sprintf "INSERT INTO %s (id, name) SELECT to_int32(%d), '%s'" stream i name) in
+      let* _ =
+        Client.execute client
+          (sprintf "INSERT INTO %s (id, name) SELECT to_int32(%d), '%s'" stream i name)
+      in
       Lwt.return_unit
     in
     let* () = insert_one 1 "one" in
@@ -65,8 +68,14 @@ let run () =
     printf "[streaming] Inserted 5 rows\n%!";
 
     (* Wait up to 5s for reader to print target rows *)
-    let timeout = let+ () = Lwt_unix.sleep 5.0 in `Timeout in
-    let reader_done = let+ () = reader in `Done in
+    let timeout =
+      let+ () = Lwt_unix.sleep 5.0 in
+      `Timeout
+    in
+    let reader_done =
+      let+ () = reader in
+      `Done
+    in
     let* _ = Lwt.pick [ reader_done; timeout ] in
     printf "[streaming] Printed %d/%d rows\n%!" !printed target;
     let* () = Connection.disconnect conn in
@@ -78,6 +87,4 @@ let run () =
   in
   Lwt_main.run program
 
-let () =
-  try run () with
-  | e -> Printf.printf "❌ Exception: %s\n%!" (Printexc.to_string e)
+let () = try run () with e -> Printf.printf "❌ Exception: %s\n%!" (Printexc.to_string e)

@@ -1,4 +1,4 @@
 (env
  (release
-  (ocamlopt_flags (:standard -O2))))
-
+  (ocamlopt_flags
+   (:standard -O2))))

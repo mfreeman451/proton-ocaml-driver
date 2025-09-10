@@ -2,16 +2,19 @@
  (name query)
  (modules query)
  (libraries proton lwt.unix)
- (preprocess (pps lwt_ppx)))
+ (preprocess
+  (pps lwt_ppx)))
 
 (executable
  (name compression_example)
  (modules compression_example)
  (libraries proton lwt.unix)
- (preprocess (pps lwt_ppx)))
+ (preprocess
+  (pps lwt_ppx)))
 
 (executable
  (name tls_example)
  (modules tls_example)
  (libraries proton lwt lwt.unix)
- (preprocess (pps lwt_ppx)))
+ (preprocess
+  (pps lwt_ppx)))

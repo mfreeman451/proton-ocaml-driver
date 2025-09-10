@@ -1,2 +1,5 @@
-(executables (names test_auth test_auth_simple test_tls) (libraries proton lwt)
- (preprocess (pps lwt_ppx)))
+(executables
+ (names test_auth test_auth_simple test_tls)
+ (libraries proton lwt)
+ (preprocess
+  (pps lwt_ppx)))

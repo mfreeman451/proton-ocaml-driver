@@ -4,12 +4,12 @@
 
 let () =
   let open Proton in
-  Lwt_main.run @@ let open Lwt.Syntax in
-  let client_lz4 = Client.create 
-    ~host:"127.0.0.1" 
-    ~port:Defines.default_port 
-    ~compression:Compress.LZ4
-    () in
+  Lwt_main.run
+  @@
+  let open Lwt.Syntax in
+  let client_lz4 =
+    Client.create ~host:"127.0.0.1" ~port:Defines.default_port ~compression:Compress.LZ4 ()
+  in
   let* () = Lwt_io.printl "=== Proton OCaml Driver - Compression Example ===" in
   let* () = Lwt_io.printl "3. Compression protocol bytes:" in
   let* () = Lwt_io.printf "   None method byte: 0x%02x\n" (Compress.method_to_byte Compress.None) in
@@ -23,7 +23,9 @@ let () =
   let* () = Lwt_io.printf "   Compressed size: %d bytes\n" (Bytes.length compressed) in
   let* () =
     Lwt_io.printf "   Compression ratio: %.2f%%%%\n"
-      (100.0 *. (float (Bytes.length compressed)) /. (float (Bytes.length original)))
+      (100.0 *. float (Bytes.length compressed) /. float (Bytes.length original))
   in
-  let* () = Lwt_io.printf "   Roundtrip successful: %b\n" (Bytes.to_string decompressed = test_data) in
+  let* () =
+    Lwt_io.printf "   Roundtrip successful: %b\n" (Bytes.to_string decompressed = test_data)
+  in
   Client.disconnect client_lz4
