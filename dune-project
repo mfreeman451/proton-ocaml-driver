@@ -1,4 +1,4 @@
-(lang dune 3.11)
+(lang dune 3.13)
 (name proton)
 (version 1.0.12)
 (generate_opam_files true)

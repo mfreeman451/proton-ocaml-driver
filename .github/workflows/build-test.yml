@@ -27,6 +27,7 @@ jobs:
           ocaml-compiler: ${{ matrix.ocaml-version }}
           dune-cache: true
           allow-prerelease-opam: true
+          opam-depext: true
 
       - name: Install dependencies (with tests)
         run: opam install . --deps-only --with-test
@@ -50,6 +51,7 @@ jobs:
           ocaml-compiler: 5.3
           dune-cache: true
           allow-prerelease-opam: true
+          opam-depext: true
 
       - name: Install dependencies (lower bounds criteria)
         run: opam install . --deps-only --with-test --criteria='+removed,+count[version-lag,solution]' --solver=builtin-0install
@@ -83,6 +85,13 @@ jobs:
           ocaml-compiler: ${{ matrix.ocaml }}
           dune-cache: true
           allow-prerelease-opam: true
+          opam-depext: true
+
+      - name: Install macOS packages
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew update
+          brew install gmp
 
       - name: Install dependencies (with tests)
         run: opam install . --deps-only --with-test
