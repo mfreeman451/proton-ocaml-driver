@@ -28,6 +28,33 @@ jobs:
       - name: Lint fmt
         uses: ocaml/setup-ocaml/lint-fmt@v3
 
+  lint-fmt-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Use OCaml 5.3
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 5.3
+          dune-cache: true
+          allow-prerelease-opam: true
+
+      - name: Install ocamlformat
+        run: opam install ocamlformat
+
+      - name: Check formatting
+        run: |
+          eval $(opam env)
+          git ls-files '*.ml' '*.mli' | xargs ocamlformat --check
+          if [ $? -ne 0 ]; then
+            echo "❌ Code is not properly formatted. Please run ocamlformat on your files."
+            echo "You can format all files with: git ls-files '*.ml' '*.mli' | xargs ocamlformat --inplace"
+            exit 1
+          fi
+          echo "✅ Code formatting is correct"
+
   lint-opam:
     runs-on: ubuntu-latest
     steps:
@@ -61,7 +88,7 @@ jobs:
       - name: Lint doc
         uses: ocaml/setup-ocaml/lint-doc@v3
 
-  lint-opam-check:
+  lint-opam-dune-sync:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

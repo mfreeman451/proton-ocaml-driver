@@ -8,8 +8,57 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    runs-on: ${{ matrix.os }}
+  test-pr:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ocaml-version: [ 4.14, 5.3 ]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Use OCaml ${{ matrix.ocaml-version }}
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: ${{ matrix.ocaml-version }}
+          dune-cache: true
+          allow-prerelease-opam: true
+          opam-depext: true
+
+      - name: Install dependencies (with tests)
+        run: opam install . --deps-only --with-test
+
+      - name: Build
+        run: opam exec -- dune build
+
+      - name: Test
+        run: opam exec -- dune runtest
+
+  lower-bounds-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Use OCaml 5.3
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 5.3
+          dune-cache: true
+          allow-prerelease-opam: true
+          opam-depext: true
+
+      - name: Install dependencies (lower bounds criteria)
+        run: opam install . --deps-only --with-test --criteria='+removed,+count[version-lag,solution]' --solver=builtin-0install
+
+      - name: Build (lower bounds)
+        run: opam exec -- dune build
+
+      - name: Test (lower bounds)
+        run: opam exec -- dune runtest
+
+  test-main:
     strategy:
       fail-fast: false
       matrix:
@@ -20,6 +69,7 @@ jobs:
             ocaml: 5.3
           - os: macos-latest
             ocaml: 5.3
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -47,21 +97,7 @@ jobs:
       - name: Test
         run: opam exec -- dune runtest
 
-  lower-bounds:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Use OCaml 5.3
-        uses: ocaml/setup-ocaml@v3
-        with:
-          ocaml-compiler: 5.3
-          dune-cache: true
-          allow-prerelease-opam: true
-          opam-depext: true
-
-      - name: Install dependencies (lower bounds criteria)
+      - name: Install lower bounds
         run: opam install . --deps-only --with-test --criteria='+removed,+count[version-lag,solution]' --solver=builtin-0install
 
       - name: Build (lower bounds)
