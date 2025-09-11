@@ -11,7 +11,7 @@ license: "MIT"
 homepage: "https://github.com/mfreeman451/proton-ocaml-driver"
 bug-reports: "https://github.com/mfreeman451/proton-ocaml-driver/issues"
 depends: [
-  "dune" {>= "3.13"}
+  "dune" {>= "3.18"}
   "ocaml" {>= "4.14.0"}
   "lz4"
   "zstd"
@@ -42,3 +42,4 @@ build: [
   ]
 ]
 dev-repo: "git+https://github.com/mfreeman451/proton-ocaml-driver.git"
+x-maintenance-intent: ["[" "(latest)" "]"]
