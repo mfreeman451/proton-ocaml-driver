@@ -1,6 +1,6 @@
 (lang dune 3.18)
 (name proton)
-(version 1.0.12)
+(version 1.0.13)
 (generate_opam_files true)
 (implicit_transitive_deps true)
 
