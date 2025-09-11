@@ -91,7 +91,7 @@ jobs:
       - name: Configure macOS compiler env
         if: matrix.os == 'macos-latest'
         run: |
-          echo "CFLAGS=-I/opt/homebrew/include" >> $GITHUB_ENV
+          echo "CFLAGS=-I/opt/homebrew/include -Wno-implicit-function-declaration" >> $GITHUB_ENV
           echo "CPATH=/opt/homebrew/include" >> $GITHUB_ENV
           echo "LDFLAGS=-L/opt/homebrew/lib" >> $GITHUB_ENV
           echo "LIBRARY_PATH=/opt/homebrew/lib" >> $GITHUB_ENV
