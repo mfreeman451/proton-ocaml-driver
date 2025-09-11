@@ -1,4 +1,4 @@
-(lang dune 3.18)
+(lang dune 3.20)
 (name proton)
 (version 1.0.14)
 (generate_opam_files true)
@@ -14,7 +14,7 @@
  (license MIT)
  (authors "mfreeman451")
  (maintainers "mfreeman451")
- (maintenance_intent ["(latest)"])
+ (maintenance_intent "(latest)")
  (depends 
   (ocaml (>= 4.14.0))
   lz4
