@@ -24,7 +24,8 @@ depends: [
   "ptime"
   "domain-name"
   "mirage-crypto"
-  "alcotest" {with-test}
+  "alcotest"
+    {with-test & ("os_distribution" != "debian" | "os_version" != "12")}
   "odoc" {with-doc}
 ]
 build: [
