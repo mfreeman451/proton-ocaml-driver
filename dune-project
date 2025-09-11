@@ -1,6 +1,6 @@
 (lang dune 3.18)
 (name proton)
-(version 1.0.13)
+(version 1.0.14)
 (generate_opam_files true)
 (implicit_transitive_deps true)
 
@@ -28,5 +28,6 @@
   ptime
   domain-name
   mirage-crypto
-  (alcotest :with-test)
+  ;; Avoid opam 2.0 Debian-12 global --with-test cycles
+  (alcotest (and :with-test (or (<> os_distribution "debian") (<> os_version "12"))))
   (odoc :with-doc)))
