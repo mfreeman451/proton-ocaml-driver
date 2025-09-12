@@ -139,6 +139,40 @@ module DataTypeTests = struct
     let* _ = exec ~label:"row5" (one 5 "Eve" 28 5678.90 5432109876L) in
     Lwt.return_unit
 
+  (* Nullable(DateTime64) live test helpers *)
+  let create_nullable_dt64_table client table_name =
+    let drop_sql = sprintf "DROP STREAM IF EXISTS %s" table_name in
+    let create_sql =
+      sprintf
+        {|
+      CREATE STREAM %s (
+        id int32,
+        service_type nullable(string),
+        service_status nullable(string),
+        last_heartbeat nullable(datetime64(3)),
+        _tp_time datetime64(3) DEFAULT now64(3),
+        PRIMARY KEY (id)
+      ) SETTINGS mode='versioned_kv', version_column='_tp_time'
+    |}
+        table_name
+    in
+    let open Lwt.Syntax in
+    let* _ = Client.execute client drop_sql in
+    let* _ = Client.execute client create_sql in
+    Lwt.return_unit
+
+  let insert_nullable_dt64_data client table_name =
+    let open Lwt.Syntax in
+    let sql =
+      sprintf
+        "INSERT INTO %s (id, service_type, service_status, last_heartbeat) SELECT to_int32(1), \
+         cast('x' as nullable(string)), cast('y' as nullable(string)), cast(now64(3) as \
+         nullable(datetime64(3)))"
+        table_name
+    in
+    let* _ = Client.execute client sql in
+    Lwt.return_unit
+
   let test_bounded_query conn table_name column_filter =
     (* First try bounded query with SETTINGS *)
     let bounded_query =
@@ -590,12 +624,54 @@ let run_live_tests () =
 
     printf "\n[DONE] Streaming test completed (received %d rows)\n" !rows_received;
 
+    (* Test 4: Nullable(DateTime64) end-to-end *)
+    printf "\n";
+    printf "═══════════════════════════════════════════\n";
+    printf "   TEST 4: Nullable(DateTime64) End-to-End  \n";
+    printf "═══════════════════════════════════════════\n";
+
+    let ndt_stream = "test_nullable_dt64" in
+    printf "[CREATE] Creating stream %s with nullable(datetime64(3))...\n%!" ndt_stream;
+    let* () = DataTypeTests.create_nullable_dt64_table client ndt_stream in
+    let* () = DataTypeTests.insert_nullable_dt64_data client ndt_stream in
+    (* Small delay to ensure visibility *)
+    let* () = Lwt_unix.sleep 0.2 in
+
+    let ndt_query =
+      sprintf
+        "SELECT service_type, service_status, last_heartbeat FROM %s ORDER BY service_type LIMIT 1 \
+         SETTINGS query_mode='table'"
+        ndt_stream
+    in
+    let* () = Connection.send_query conn ndt_query in
+    let rec drain_ndt acc cols =
+      let* pkt = Connection.receive_packet conn in
+      match pkt with
+      | Connection.PData b ->
+          let rows = Block.get_rows b in
+          let cols = match cols with None -> Some (Block.columns_with_types b) | x -> x in
+          drain_ndt (acc @ rows) cols
+      | Connection.PEndOfStream ->
+          let rows = acc in
+          let col_names = match cols with Some c -> List.map fst c | None -> [] in
+          let col_types = match cols with Some c -> List.map snd c | None -> [] in
+          printf "Columns: %s\n"
+            (String.concat ", " (List.map2 (fun n t -> n ^ ":" ^ t) col_names col_types));
+          List.iter
+            (fun r -> printf "Row: %s\n" (String.concat ", " (List.map Column.value_to_string r)))
+            rows;
+          Lwt.return_unit
+      | _ -> drain_ndt acc cols
+    in
+    let* () = drain_ndt [] None in
+
     let* () = Connection.disconnect conn in
     let* () = Connection.disconnect conn2 in
     let* () = Connection.disconnect conn3 in
 
     let* _ = Client.execute client (sprintf "DROP STREAM IF EXISTS %s" table_name) in
     let* _ = Client.execute client (sprintf "DROP STREAM IF EXISTS %s" stream_table) in
+    let* _ = Client.execute client (sprintf "DROP STREAM IF EXISTS %s" ndt_stream) in
 
     printf "\n";
     printf "════════════════════════════════════════════\n";

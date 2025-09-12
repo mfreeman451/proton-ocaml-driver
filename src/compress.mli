@@ -53,7 +53,7 @@ val method_of_byte : int -> method_t
 
     @param byte The protocol byte value
     @return The corresponding compression method
-    @raise Invalid_argument if the byte value is not recognized
+    @raise Stdlib.Invalid_argument if the byte value is not recognized
 
     @since 1.0.0 *)
 
