@@ -790,6 +790,47 @@ let test_sequence_integration () =
   let count = Seq.fold_left (fun acc _ -> acc + 1) 0 test_seq in
   Alcotest.(check int) "Sequence integration works" 5 count
 
+(* Ensure STableColumns packet (table name + columns block) is consumed correctly and stream alignment remains intact. *)
+let test_stablecolumns_block_read () =
+  (* Reuse helpers: write_varint, write_str, build_uncompressed_block *)
+  (* Build bytes: [table_name][uncompressed header block]; then feed to receive_data_block *)
+  let mk_frame (payload : bytes) : bytes = payload in
+  let header_block = build_uncompressed_block ~cols:[ ("c1", "String", 0) ] in
+  let stream = Buffer.create 256 in
+  write_str stream "tbl";
+  Buffer.add_bytes stream (mk_frame header_block);
+  let bys = Buffer.contents stream |> Bytes.of_string in
+
+  (* 3) Feed the bytes through a pipe and use Connection.receive_packet to verify alignment. *)
+  let conn = Connection.create ~host:"" ~port:0 ~compression:Compress.None () in
+  (* Install the fake fd and minimal server info so Block.read will parse BlockInfo *)
+  let srv : Connection.server_info =
+    {
+      Context.name = "proton";
+      version_major = 1;
+      version_minor = 0;
+      version_patch = 0;
+      revision = Defines.client_revision;
+      timezone = None;
+      display_name = "test";
+    }
+  in
+  conn.Connection.srv <- Some srv;
+  (* Read a single data block from the synthetic stream using receive_data_block. *)
+  let pos = ref 0 in
+  let read_fn buf off len =
+    let remaining = Bytes.length bys - !pos in
+    let to_copy = if remaining < len then remaining else len in
+    Bytes.blit bys !pos buf off to_copy;
+    pos := !pos + to_copy;
+    Lwt.return to_copy
+  in
+  let blk = Lwt_main.run (Connection.receive_data_block conn ~compressible:true read_fn) in
+  Alcotest.(check int) "n_rows=0" 0 blk.Block.n_rows;
+  Alcotest.(check int) "n_cols=1" 1 blk.Block.n_columns;
+  Alcotest.(check string) "col name" "c1" blk.Block.columns.(0).Block.name;
+  Alcotest.(check string) "type" "String" blk.Block.columns.(0).Block.type_spec
+
 let () =
   Alcotest.run "Proton Lwt"
     [
@@ -881,5 +922,6 @@ let () =
           Alcotest.test_case "Idiomatic streaming API" `Quick test_idiomatic_streaming;
           Alcotest.test_case "Fold and iter operations" `Quick test_fold_and_iter;
           Alcotest.test_case "Sequence integration" `Quick test_sequence_integration;
+          Alcotest.test_case "STableColumns block read" `Quick test_stablecolumns_block_read;
         ] );
     ]

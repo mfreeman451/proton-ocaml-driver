@@ -860,8 +860,10 @@ let receive_packet t : packet Lwt.t =
       let+ b = receive_data_block t ~compressible:false read_fn in
       PLog b
   | STableColumns ->
-      let* _ = read_str_lwt read_fn in
-      let+ _ = read_str_lwt read_fn in
+      (* Server sends table name then a block with columns (name/type). Read and discard. *)
+      let* _table_name = read_str_lwt read_fn in
+      let+ _cols_block = receive_data_block t ~compressible:true read_fn in
+      (* We ignore STableColumns content for now, but ensure stream alignment. *)
       PProgress
   | SPartUUIDs | SReadTaskRequest ->
       let+ _ = receive_data_block t ~compressible:true read_fn in
