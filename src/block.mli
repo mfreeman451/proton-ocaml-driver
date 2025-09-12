@@ -42,7 +42,7 @@ val read_block : revision:int -> in_channel -> t
     @param revision Protocol revision number
     @param ic Input channel to read from
     @return The parsed data block
-    @raise End_of_file if the stream ends unexpectedly
+    @raise Stdlib.End_of_file if the stream ends unexpectedly
 
     @since 1.0.0 *)
 

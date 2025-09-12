@@ -127,7 +127,8 @@ val connect : t -> unit Lwt.t
 
     @param conn The connection handle
     @return A promise that resolves when connected
-    @raise Connection_failed if the connection cannot be established
+    @raise Stdlib.Failure if the connection cannot be established or host cannot be resolved
+    @raise Stdlib.Invalid_argument if TLS client certificate/key configuration is invalid
 
     @since 1.0.0 *)
 
@@ -198,7 +199,7 @@ val receive_packet : t -> packet Lwt.t
 
     @param conn The connection handle
     @return A promise resolving to the received packet
-    @raise Server_exception if the server sends an error
+    @raise Errors.Server_exception if the server sends an error
 
     @since 1.0.0 *)
 

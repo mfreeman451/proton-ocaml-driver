@@ -57,7 +57,7 @@ val server_packet_of_int : int -> server_packet
 
     @param n The integer value from the wire protocol
     @return The corresponding server packet type
-    @raise Failure if the integer doesn't correspond to a known packet type
+    @raise Stdlib.Failure if the integer doesn't correspond to a known packet type
 
     @since 1.0.0 *)
 

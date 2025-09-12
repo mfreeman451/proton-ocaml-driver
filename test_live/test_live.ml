@@ -165,9 +165,9 @@ module DataTypeTests = struct
     let open Lwt.Syntax in
     let sql =
       sprintf
-        "INSERT INTO %s (id, service_type, service_status, last_heartbeat) \
-         SELECT to_int32(1), cast('x' as nullable(string)), cast('y' as nullable(string)), \
-                cast(now64(3) as nullable(datetime64(3)))"
+        "INSERT INTO %s (id, service_type, service_status, last_heartbeat) SELECT to_int32(1), \
+         cast('x' as nullable(string)), cast('y' as nullable(string)), cast(now64(3) as \
+         nullable(datetime64(3)))"
         table_name
     in
     let* _ = Client.execute client sql in
@@ -649,17 +649,14 @@ let run_live_tests () =
       match pkt with
       | Connection.PData b ->
           let rows = Block.get_rows b in
-          let cols = (match cols with None -> Some (Block.columns_with_types b) | x -> x) in
+          let cols = match cols with None -> Some (Block.columns_with_types b) | x -> x in
           drain_ndt (acc @ rows) cols
       | Connection.PEndOfStream ->
           let rows = acc in
-          let col_names =
-            match cols with Some c -> List.map fst c | None -> []
-          in
-          let col_types =
-            match cols with Some c -> List.map snd c | None -> []
-          in
-          printf "Columns: %s\n" (String.concat ", " (List.map2 (fun n t -> n ^ ":" ^ t) col_names col_types));
+          let col_names = match cols with Some c -> List.map fst c | None -> [] in
+          let col_types = match cols with Some c -> List.map snd c | None -> [] in
+          printf "Columns: %s\n"
+            (String.concat ", " (List.map2 (fun n t -> n ^ ":" ^ t) col_names col_types));
           List.iter
             (fun r -> printf "Row: %s\n" (String.concat ", " (List.map Column.value_to_string r)))
             rows;
