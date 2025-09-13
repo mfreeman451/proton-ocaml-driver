@@ -4,7 +4,7 @@ open Column
 
 (* Keep the last seen header's column types to handle servers that omit
    repeating type specs in subsequent data blocks. *)
-let last_header_types : (string array) option ref = ref None
+let last_header_types : string array option ref = ref None
 
 type column = {
   name : string;
@@ -37,10 +37,10 @@ let read_block ~revision ic : t =
             | _ -> raw_type
         in
         (match Sys.getenv_opt "PROTON_DEBUG" with
-         | Some ("1"|"true"|"TRUE"|"yes"|"YES") ->
-             Printf.printf "[proton] block col[%d/%d] name='%s' type='%s' rows=%d\n%!"
-               (i+1) n_columns name type_spec n_rows
-         | _ -> ());
+        | Some ("1" | "true" | "TRUE" | "yes" | "YES") ->
+            Printf.printf "[proton] block col[%d/%d] name='%s' type='%s' rows=%d\n%!" (i + 1)
+              n_columns name type_spec n_rows
+        | _ -> ());
         let data =
           if n_rows = 0 then [||]
           else
@@ -53,10 +53,9 @@ let read_block ~revision ic : t =
     loop 0 []
   in
   (* If this is a header block, remember its types for subsequent data blocks. *)
-  if n_rows = 0 then (
-    let types = Array.map (fun c -> c.type_spec) cols in
-    last_header_types := Some types
-  );
+  (if n_rows = 0 then
+     let types = Array.map (fun c -> c.type_spec) cols in
+     last_header_types := Some types);
   { n_columns; n_rows; columns = cols }
 
 let read_block_br ~revision br : t =
@@ -81,10 +80,10 @@ let read_block_br ~revision br : t =
             | _ -> raw_type
         in
         (match Sys.getenv_opt "PROTON_DEBUG" with
-         | Some ("1"|"true"|"TRUE"|"yes"|"YES") ->
-             Printf.printf "[proton] block(br) col[%d/%d] name='%s' type='%s' rows=%d\n%!"
-               (i+1) n_columns name type_spec n_rows
-         | _ -> ());
+        | Some ("1" | "true" | "TRUE" | "yes" | "YES") ->
+            Printf.printf "[proton] block(br) col[%d/%d] name='%s' type='%s' rows=%d\n%!" (i + 1)
+              n_columns name type_spec n_rows
+        | _ -> ());
         let data =
           if n_rows = 0 then [||]
           else
@@ -96,10 +95,9 @@ let read_block_br ~revision br : t =
     in
     loop 0 []
   in
-  if n_rows = 0 then (
-    let types = Array.map (fun c -> c.type_spec) cols in
-    last_header_types := Some types
-  );
+  (if n_rows = 0 then
+     let types = Array.map (fun c -> c.type_spec) cols in
+     last_header_types := Some types);
   { n_columns; n_rows; columns = cols }
 
 let get_rows (b : t) : value list list =

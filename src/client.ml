@@ -17,7 +17,11 @@ let execute c (query : string) : query_result Lwt.t =
   let* () = Connection.send_query c.conn query in
   let cols_header = ref None in
   let rows_acc : Column.value list list ref = ref [] in
-  let debug = match Sys.getenv_opt "PROTON_DEBUG" with Some ("1"|"true"|"TRUE"|"yes"|"YES") -> true | _ -> false in
+  let debug =
+    match Sys.getenv_opt "PROTON_DEBUG" with
+    | Some ("1" | "true" | "TRUE" | "yes" | "YES") -> true
+    | _ -> false
+  in
   let rec loop () =
     let* pkt = Connection.receive_packet c.conn in
     match pkt with
@@ -27,10 +31,11 @@ let execute c (query : string) : query_result Lwt.t =
           if !cols_header = None then (
             let cols = Block.columns_with_types b in
             if debug then (
-              List.iter (fun (n,t) -> Printf.printf "[proton] header col name='%s' type='%s'\n" n t) cols;
+              List.iter
+                (fun (n, t) -> Printf.printf "[proton] header col name='%s' type='%s'\n" n t)
+                cols;
               flush stdout);
-            cols_header := Some cols
-          );
+            cols_header := Some cols);
           loop ())
         else
           let rows = Block.get_rows b in
