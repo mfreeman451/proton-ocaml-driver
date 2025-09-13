@@ -385,7 +385,29 @@ let receive_hello t =
       t.srv <- Some si;
       t.ctx.server_info <- Some si;
       Lwt.return_unit
-  | SException -> Lwt.fail (Failure "Server exception in hello")
+  | SException ->
+      let rec read_exception_lwt () =
+        let* code32 = read_int32_le_lwt read_fn in
+        let code = Int32.to_int code32 in
+        let* name = read_str_lwt read_fn in
+        let* msg = read_str_lwt read_fn in
+        let* stack = read_str_lwt read_fn in
+        let* has_nested = read_byte read_fn in
+        let base =
+          (if name <> "DB::Exception" then name ^ ". " else "") ^ msg ^ ". Stack trace:\n\n" ^ stack
+        in
+        let* nested =
+          if has_nested <> 0 then
+            let+ nested_exn = read_exception_lwt () in
+            match nested_exn with
+            | Errors.Server_exception se -> Some se.message
+            | e -> Some (Printexc.to_string e)
+          else Lwt.return_none
+        in
+        Lwt.return (Errors.Server_exception { code; message = base; nested })
+      in
+      let* e = read_exception_lwt () in
+      Lwt.fail e
   | _other -> Lwt.fail (Unexpected_packet (Printf.sprintf "Expected HELLO, got %d" p))
 
 let force_connect t =
@@ -730,6 +752,79 @@ let read_uncompressed_block_lwt read_fn : bytes Lwt.t =
       let+ s = read_and_copy_bytes len in
       Bytes.to_string s
   in
+  let lower s = String.lowercase_ascii (String.trim s) in
+  let unwrap prefix s =
+    let s = String.trim s |> lower in
+    let lp = String.length prefix in
+    String.sub s lp (String.length s - lp - 1) |> String.trim
+  in
+  let split_top_level_commas s =
+    let len = String.length s in
+    let rec loop acc depth i last =
+      if i = len then List.rev (String.sub s last (i - last) :: acc)
+      else
+        match s.[i] with
+        | '(' -> loop acc (depth + 1) (i + 1) last
+        | ')' -> loop acc (depth - 1) (i + 1) last
+        | ',' when depth = 0 -> loop (String.sub s last (i - last) :: acc) depth (i + 1) (i + 1)
+        | _ -> loop acc depth (i + 1) last
+    in
+    loop [] 0 0 0 |> List.map String.trim
+  in
+  let rec copy_values typ count : unit Lwt.t =
+    let t = lower typ in
+    let fixed_bytes_per_row =
+      if t = "uint8" || t = "int8" || has_prefix t "enum8(" || t = "bool" then Some 1
+      else if t = "uint16" || t = "int16" || has_prefix t "enum16(" then Some 2
+      else if t = "uint32" || t = "int32" || t = "float32" || t = "datetime" then Some 4
+      else if t = "uint64" || t = "int64" || t = "float64" || has_prefix t "datetime64" then Some 8
+      else None
+    in
+    match fixed_bytes_per_row with
+    | Some sz ->
+        let+ b = lwt_read_exact read_fn (sz * count) in
+        Buffer.add_bytes buf b
+    | None ->
+        if t = "string" || t = "json" then (
+          let rec loop i =
+            if i = count then Lwt.return_unit
+            else
+              let* _ = read_and_copy_str () in
+              loop (i + 1)
+          in
+          loop 0)
+        else if has_prefix t "nullable(" then (
+          let inner = unwrap "nullable(" t in
+          let* nullflags = lwt_read_exact read_fn count in
+          Buffer.add_bytes buf nullflags;
+          copy_values inner count)
+        else if has_prefix t "array(" then (
+          let inner = unwrap "array(" t in
+          let* offs = lwt_read_exact read_fn (8 * count) in
+          Buffer.add_bytes buf offs;
+          let last = if count = 0 then 0 else Binary.bytes_get_int64_le offs ((count - 1) * 8) |> Int64.to_int in
+          copy_values inner last)
+        else if has_prefix t "map(" then (
+          let inner = unwrap "map(" t in
+          let parts = split_top_level_commas inner in
+          let k, v = (List.nth parts 0, List.nth parts 1) in
+          let* offs = lwt_read_exact read_fn (8 * count) in
+          Buffer.add_bytes buf offs;
+          let last = if count = 0 then 0 else Binary.bytes_get_int64_le offs ((count - 1) * 8) |> Int64.to_int in
+          let* () = copy_values k last in
+          copy_values v last)
+        else if has_prefix t "tuple(" then (
+          let inner = unwrap "tuple(" t in
+          let parts = split_top_level_commas inner in
+          let rec loop = function
+            | [] -> Lwt.return_unit
+            | p :: tl ->
+                let* () = copy_values p count in
+                loop tl
+          in
+          loop parts)
+        else Lwt.fail (Failure (Printf.sprintf "unsupported uncompressed column type: %s" t))
+  in
   (* BlockInfo *)
   let rec copy_block_info () =
     let* field = read_varint_raw_to_buf () in
@@ -751,33 +846,11 @@ let read_uncompressed_block_lwt read_fn : bytes Lwt.t =
     else
       let* _col_name = read_and_copy_str () in
       let* col_type = read_and_copy_str () in
-      let t = String.lowercase_ascii (String.trim col_type) in
-      let fixed_bytes_per_row =
-        if t = "uint8" || t = "int8" || has_prefix t "enum8(" then Some 1
-        else if t = "uint16" || t = "int16" || has_prefix t "enum16(" then Some 2
-        else if t = "uint32" || t = "int32" || t = "float32" || t = "datetime" then Some 4
-        else if t = "uint64" || t = "int64" || t = "float64" || has_prefix t "datetime64" then
-          Some 8
-        else None
-      in
-      let* () =
-        match fixed_bytes_per_row with
-        | Some sz ->
-            let+ _ = read_and_copy_bytes (sz * n_rows) in
-            ()
-        | None ->
-            if t = "string" || t = "json" then
-              let rec loop r =
-                if r = n_rows then Lwt.return_unit
-                else
-                  let* _ = read_and_copy_str () in
-                  loop (r + 1)
-              in
-              loop 0
-            else
-              Lwt.fail
-                (Failure (Printf.sprintf "unsupported uncompressed column type: %s" col_type))
-      in
+      (match Sys.getenv_opt "PROTON_DEBUG" with
+      | Some ("1" | "true" | "TRUE" | "yes" | "YES") ->
+          Printf.printf "[uncompressed] col %d type='%s' rows=%d\n%!" (i+1) col_type n_rows
+      | _ -> ());
+      let* () = copy_values col_type n_rows in
       copy_columns (i + 1)
   in
   let* () = copy_columns 0 in
