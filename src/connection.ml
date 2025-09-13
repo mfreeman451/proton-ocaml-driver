@@ -785,14 +785,14 @@ let read_uncompressed_block_lwt read_fn : bytes Lwt.t =
         let+ b = lwt_read_exact read_fn (sz * count) in
         Buffer.add_bytes buf b
     | None ->
-        if t = "string" || t = "json" then (
+        if t = "string" || t = "json" then
           let rec loop i =
             if i = count then Lwt.return_unit
             else
               let* _ = read_and_copy_str () in
               loop (i + 1)
           in
-          loop 0)
+          loop 0
         else if has_prefix t "nullable(" then (
           let inner = unwrap "nullable(" t in
           let* nullflags = lwt_read_exact read_fn count in
@@ -802,7 +802,10 @@ let read_uncompressed_block_lwt read_fn : bytes Lwt.t =
           let inner = unwrap "array(" t in
           let* offs = lwt_read_exact read_fn (8 * count) in
           Buffer.add_bytes buf offs;
-          let last = if count = 0 then 0 else Binary.bytes_get_int64_le offs ((count - 1) * 8) |> Int64.to_int in
+          let last =
+            if count = 0 then 0
+            else Binary.bytes_get_int64_le offs ((count - 1) * 8) |> Int64.to_int
+          in
           copy_values inner last)
         else if has_prefix t "map(" then (
           let inner = unwrap "map(" t in
@@ -810,10 +813,13 @@ let read_uncompressed_block_lwt read_fn : bytes Lwt.t =
           let k, v = (List.nth parts 0, List.nth parts 1) in
           let* offs = lwt_read_exact read_fn (8 * count) in
           Buffer.add_bytes buf offs;
-          let last = if count = 0 then 0 else Binary.bytes_get_int64_le offs ((count - 1) * 8) |> Int64.to_int in
+          let last =
+            if count = 0 then 0
+            else Binary.bytes_get_int64_le offs ((count - 1) * 8) |> Int64.to_int
+          in
           let* () = copy_values k last in
           copy_values v last)
-        else if has_prefix t "tuple(" then (
+        else if has_prefix t "tuple(" then
           let inner = unwrap "tuple(" t in
           let parts = split_top_level_commas inner in
           let rec loop = function
@@ -822,7 +828,7 @@ let read_uncompressed_block_lwt read_fn : bytes Lwt.t =
                 let* () = copy_values p count in
                 loop tl
           in
-          loop parts)
+          loop parts
         else Lwt.fail (Failure (Printf.sprintf "unsupported uncompressed column type: %s" t))
   in
   (* BlockInfo *)
@@ -848,7 +854,7 @@ let read_uncompressed_block_lwt read_fn : bytes Lwt.t =
       let* col_type = read_and_copy_str () in
       (match Sys.getenv_opt "PROTON_DEBUG" with
       | Some ("1" | "true" | "TRUE" | "yes" | "YES") ->
-          Printf.printf "[uncompressed] col %d type='%s' rows=%d\n%!" (i+1) col_type n_rows
+          Printf.printf "[uncompressed] col %d type='%s' rows=%d\n%!" (i + 1) col_type n_rows
       | _ -> ());
       let* () = copy_values col_type n_rows in
       copy_columns (i + 1)
