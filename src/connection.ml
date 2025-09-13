@@ -860,8 +860,9 @@ let receive_packet t : packet Lwt.t =
       let+ b = receive_data_block t ~compressible:false read_fn in
       PLog b
   | STableColumns ->
-      (* Server sends table name then a block with columns (name/type). Read and discard. *)
-      let* _table_name = read_str_lwt read_fn in
+      (* Server sends a block with table columns (name/type). The helper already
+         reads and discards the leading table name string inside receive_data_block,
+         so do not read it here to avoid misalignment. *)
       let+ _cols_block = receive_data_block t ~compressible:true read_fn in
       (* We ignore STableColumns content for now, but ensure stream alignment. *)
       PProgress

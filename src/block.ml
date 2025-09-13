@@ -2,6 +2,10 @@ open Varint
 open Binary
 open Column
 
+(* Keep the last seen header's column types to handle servers that omit
+   repeating type specs in subsequent data blocks. *)
+let last_header_types : (string array) option ref = ref None
+
 type column = {
   name : string;
   type_spec : string;
@@ -22,7 +26,21 @@ let read_block ~revision ic : t =
       if i = n_columns then Array.of_list (List.rev acc)
       else
         let name = read_str ic in
-        let type_spec = read_str ic in
+        let raw_type = read_str ic in
+        let type_spec =
+          if n_rows = 0 then raw_type
+          else if raw_type <> "" then raw_type
+          else
+            (* Substitute from last header types if available *)
+            match !last_header_types with
+            | Some arr when i < Array.length arr -> arr.(i)
+            | _ -> raw_type
+        in
+        (match Sys.getenv_opt "PROTON_DEBUG" with
+         | Some ("1"|"true"|"TRUE"|"yes"|"YES") ->
+             Printf.printf "[proton] block col[%d/%d] name='%s' type='%s' rows=%d\n%!"
+               (i+1) n_columns name type_spec n_rows
+         | _ -> ());
         let data =
           if n_rows = 0 then [||]
           else
@@ -34,6 +52,11 @@ let read_block ~revision ic : t =
     in
     loop 0 []
   in
+  (* If this is a header block, remember its types for subsequent data blocks. *)
+  if n_rows = 0 then (
+    let types = Array.map (fun c -> c.type_spec) cols in
+    last_header_types := Some types
+  );
   { n_columns; n_rows; columns = cols }
 
 let read_block_br ~revision br : t =
@@ -48,7 +71,20 @@ let read_block_br ~revision br : t =
       if i = n_columns then Array.of_list (List.rev acc)
       else
         let name = Binary.read_str_br br in
-        let type_spec = Binary.read_str_br br in
+        let raw_type = Binary.read_str_br br in
+        let type_spec =
+          if n_rows = 0 then raw_type
+          else if raw_type <> "" then raw_type
+          else
+            match !last_header_types with
+            | Some arr when i < Array.length arr -> arr.(i)
+            | _ -> raw_type
+        in
+        (match Sys.getenv_opt "PROTON_DEBUG" with
+         | Some ("1"|"true"|"TRUE"|"yes"|"YES") ->
+             Printf.printf "[proton] block(br) col[%d/%d] name='%s' type='%s' rows=%d\n%!"
+               (i+1) n_columns name type_spec n_rows
+         | _ -> ());
         let data =
           if n_rows = 0 then [||]
           else
@@ -60,6 +96,10 @@ let read_block_br ~revision br : t =
     in
     loop 0 []
   in
+  if n_rows = 0 then (
+    let types = Array.map (fun c -> c.type_spec) cols in
+    last_header_types := Some types
+  );
   { n_columns; n_rows; columns = cols }
 
 let get_rows (b : t) : value list list =
