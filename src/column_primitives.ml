@@ -183,11 +183,12 @@ let reader_primitive_of_spec (s : string) : (in_channel -> int -> value array) o
           done;
           a)
   | _ when s = "bool" ->
+      (* ClickHouse/Proton encodes Bool as UInt8 (0 or 1). *)
       Some
         (fun ic n ->
           let a = Array.make n Null in
           for i = 0 to n - 1 do
-            a.(i) <- UInt32 (read_int32_le ic)
+            a.(i) <- UInt32 (Int32.of_int (read_uint8 ic))
           done;
           a)
   | _ when has_prefix s "fixedstring(" ->
@@ -399,11 +400,12 @@ let reader_primitive_of_spec_br (s : string) : (Buffered_reader.t -> int -> valu
           done;
           a)
   | _ when s = "bool" ->
+      (* ClickHouse/Proton encodes Bool as UInt8 (0 or 1). *)
       Some
         (fun br n ->
           let a = Array.make n Null in
           for i = 0 to n - 1 do
-            a.(i) <- UInt32 (read_int32_le_br br)
+            a.(i) <- UInt32 (Int32.of_int (read_uint8_br br))
           done;
           a)
   | _ when has_prefix s "fixedstring(" ->
