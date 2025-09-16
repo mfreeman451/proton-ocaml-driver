@@ -25,6 +25,22 @@ type t = { conn : Connection.t }
 (** The main client type representing a connection to a Proton server. Contains the underlying
     connection handle used for all database operations. *)
 
+type prepared_statement
+(** Prepared statement representation generated from a parameterized query template. The template
+    syntax uses double curly braces ([{{name}}]) to mark named parameters. *)
+
+module Prepared : sig
+  type t = prepared_statement
+
+  val render : t -> params:(string * Column.value) list -> string
+  (** [render stmt ~params] produces the executable SQL string for the prepared statement using the
+      supplied parameter bindings. *)
+
+  val placeholder_names : t -> string list
+  (** [placeholder_names stmt] returns the unique placeholder names referenced by the prepared
+      statement. *)
+end
+
 val create :
   ?host:string ->
   ?port:int ->
@@ -85,6 +101,52 @@ val execute : t -> string -> query_result Lwt.t
 
     @since 1.0.0 *)
 
+val prepare : t -> string -> prepared_statement
+(** [prepare client query] parses a parameterized query template into a prepared statement.
+
+    Use [{{parameter_name}}] within the query string to mark parameters. The returned prepared
+    statement can be executed multiple times with different parameter bindings.
+
+    Example:
+    {[
+      let stmt = Client.prepare client "SELECT * FROM events WHERE tenant_id = {{tenant}}" in
+      let%lwt _ =
+        Client.execute_prepared client stmt ~params:[ ("tenant", Column.String "acme") ]
+      in
+      Lwt.return_unit
+    ]}
+
+    @since 1.1.0 *)
+
+val execute_prepared :
+  t -> prepared_statement -> params:(string * Column.value) list -> query_result Lwt.t
+(** [execute_prepared client stmt ~params] executes a prepared statement with the provided
+    parameters.
+
+    Parameter values are supplied as an association list mapping placeholder names (without braces)
+    to {!Column.value} values. All placeholders in the prepared statement must have a corresponding
+    parameter entry.
+
+    @since 1.1.0 *)
+
+val execute_with_params : t -> string -> params:(string * Column.value) list -> query_result Lwt.t
+(** [execute_with_params client query ~params] executes a parameterized query in one step.
+
+    This is a convenience wrapper that combines {!prepare} and {!execute_prepared} for single-use
+    queries. Placeholders use the same [{{name}}] syntax as prepared statements.
+
+    Example:
+    {[
+      let%lwt rows =
+        Client.execute_with_params client
+          "SELECT * FROM metrics WHERE name = {{metric}} AND ts >= {{start_ts}}"
+          ~params:[ ("metric", Column.String "latency"); ("start_ts", Column.Int64 1_700_000_000L) ]
+      in
+      Lwt.return rows
+    ]}
+
+    @since 1.1.0 *)
+
 (** {2 Streaming Query Functions}
 
     These functions provide efficient streaming access to query results, allowing processing of
@@ -112,6 +174,32 @@ val query_fold :
 
     @since 1.0.0 *)
 
+val query_fold_prepared :
+  t ->
+  prepared_statement ->
+  params:(string * Column.value) list ->
+  init:'acc ->
+  f:('acc -> Column.value list -> 'acc Lwt.t) ->
+  'acc Lwt.t
+(** [query_fold_prepared client stmt ~params ~init ~f] folds over results of a prepared query.
+
+    This variant accepts a pre-parsed statement created with {!prepare}, allowing it to be reused
+    with different parameter bindings.
+
+    @since 1.1.0 *)
+
+val query_fold_with_params :
+  t ->
+  string ->
+  params:(string * Column.value) list ->
+  init:'acc ->
+  f:('acc -> Column.value list -> 'acc Lwt.t) ->
+  'acc Lwt.t
+(** [query_fold_with_params client query ~params ~init ~f] folds over a parameterized query in one
+    step. Equivalent to combining {!prepare} and {!query_fold_prepared} for a single execution.
+
+    @since 1.1.0 *)
+
 val query_iter : t -> string -> f:(Column.value list -> unit Lwt.t) -> unit Lwt.t
 (** [query_iter client query ~f] executes a query and applies a function to each row.
 
@@ -131,6 +219,28 @@ val query_iter : t -> string -> f:(Column.value list -> unit Lwt.t) -> unit Lwt.
 
     @since 1.0.0 *)
 
+val query_iter_prepared :
+  t ->
+  prepared_statement ->
+  params:(string * Column.value) list ->
+  f:(Column.value list -> unit Lwt.t) ->
+  unit Lwt.t
+(** [query_iter_prepared client stmt ~params ~f] iterates over the rows returned by a prepared
+    query.
+
+    @since 1.1.0 *)
+
+val query_iter_with_params :
+  t ->
+  string ->
+  params:(string * Column.value) list ->
+  f:(Column.value list -> unit Lwt.t) ->
+  unit Lwt.t
+(** [query_iter_with_params client query ~params ~f] iterates over a parameterized query without
+    explicitly managing a prepared statement.
+
+    @since 1.1.0 *)
+
 val query_to_seq : t -> string -> Column.value list Seq.t Lwt.t
 (** [query_to_seq client query] executes a query and returns results as a lazy sequence.
 
@@ -148,6 +258,20 @@ val query_to_seq : t -> string -> Column.value list Seq.t Lwt.t
 
     @since 1.0.0 *)
 
+val query_to_seq_prepared :
+  t -> prepared_statement -> params:(string * Column.value) list -> Column.value list Seq.t Lwt.t
+(** [query_to_seq_prepared client stmt ~params] executes a prepared query and exposes the rows as a
+    lazy sequence.
+
+    @since 1.1.0 *)
+
+val query_to_seq_with_params :
+  t -> string -> params:(string * Column.value) list -> Column.value list Seq.t Lwt.t
+(** [query_to_seq_with_params client query ~params] executes a parameterized query and returns a
+    lazy sequence without explicitly creating a prepared statement.
+
+    @since 1.1.0 *)
+
 val query_collect : t -> string -> Column.value list list Lwt.t
 (** [query_collect client query] executes a query and collects all results into a list.
 
@@ -159,6 +283,19 @@ val query_collect : t -> string -> Column.value list list Lwt.t
     @return A promise resolving to a list of all rows
 
     @since 1.0.0 *)
+
+val query_collect_prepared :
+  t -> prepared_statement -> params:(string * Column.value) list -> Column.value list list Lwt.t
+(** [query_collect_prepared client stmt ~params] executes a prepared query and collects all rows.
+
+    @since 1.1.0 *)
+
+val query_collect_with_params :
+  t -> string -> params:(string * Column.value) list -> Column.value list list Lwt.t
+(** [query_collect_with_params client query ~params] executes a parameterized query and collects all
+    rows without manually preparing it.
+
+    @since 1.1.0 *)
 
 (** {2 Advanced Streaming with Column Metadata}
 
@@ -193,6 +330,30 @@ val query_fold_with_columns :
 
     @since 1.0.0 *)
 
+val query_fold_with_columns_prepared :
+  t ->
+  prepared_statement ->
+  params:(string * Column.value) list ->
+  init:'acc ->
+  f:('acc -> Column.value list -> (string * string) list -> 'acc Lwt.t) ->
+  'acc streaming_result Lwt.t
+(** [query_fold_with_columns_prepared client stmt ~params ~init ~f] folds over the rows and columns
+    of a prepared query.
+
+    @since 1.1.0 *)
+
+val query_fold_with_columns_with_params :
+  t ->
+  string ->
+  params:(string * Column.value) list ->
+  init:'acc ->
+  f:('acc -> Column.value list -> (string * string) list -> 'acc Lwt.t) ->
+  'acc streaming_result Lwt.t
+(** [query_fold_with_columns_with_params client query ~params ~init ~f] folds over a parameterized
+    query, returning both accumulated rows and column metadata.
+
+    @since 1.1.0 *)
+
 val query_iter_with_columns :
   t ->
   string ->
@@ -208,6 +369,28 @@ val query_iter_with_columns :
     @return A promise resolving to the column metadata
 
     @since 1.0.0 *)
+
+val query_iter_with_columns_prepared :
+  t ->
+  prepared_statement ->
+  params:(string * Column.value) list ->
+  f:(Column.value list -> (string * string) list -> unit Lwt.t) ->
+  (string * string) list Lwt.t
+(** [query_iter_with_columns_prepared client stmt ~params ~f] iterates over rows of a prepared query
+    while providing column metadata.
+
+    @since 1.1.0 *)
+
+val query_iter_with_columns_with_params :
+  t ->
+  string ->
+  params:(string * Column.value) list ->
+  f:(Column.value list -> (string * string) list -> unit Lwt.t) ->
+  (string * string) list Lwt.t
+(** [query_iter_with_columns_with_params client query ~params ~f] iterates over a parameterized
+    query, returning the final column metadata.
+
+    @since 1.1.0 *)
 
 (** {2 Data Insertion Functions}
 
