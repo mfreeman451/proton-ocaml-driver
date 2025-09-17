@@ -409,6 +409,141 @@ let test_int64_roundtrip () =
       Alcotest.(check int64) (Printf.sprintf "int64 roundtrip %Ld" value) value decoded)
     test_values
 
+(* Prepared statement tests *)
+
+let prepare query = Client.prepare (Client.create ()) query
+let sort_strings = List.sort String.compare
+
+let expect_invalid_argument name expected f =
+  match f () with
+  | exception Invalid_argument msg -> Alcotest.(check string) name expected msg
+  | _ -> Alcotest.fail (name ^ ": expected Invalid_argument")
+
+let test_prepared_placeholder_extraction () =
+  let stmt = prepare "SELECT * FROM foo WHERE a = {{a}} AND b = {{ b }} OR c = {{a}}" in
+  let names = Client.Prepared.placeholder_names stmt |> sort_strings in
+  Alcotest.(check (list string)) "placeholder names" [ "a"; "b" ] names
+
+let test_prepared_render_literals () =
+  let stmt =
+    prepare
+      "SELECT {{str}} AS s, {{i32}} AS i32, {{i64}} AS i64, {{u32}} AS u32, {{u64}} AS u64, \
+       {{flt}} AS f, {{null}} AS n"
+  in
+  let rendered =
+    Client.Prepared.render stmt
+      ~params:
+        [
+          ("str", Column.String "hello");
+          ("i32", Column.Int32 42l);
+          ("i64", Column.Int64 9000L);
+          ("u32", Column.UInt32 7l);
+          ("u64", Column.UInt64 (-1L));
+          ("flt", Column.Float64 3.141592653589793);
+          ("null", Column.Null);
+        ]
+  in
+  Alcotest.(check string)
+    "render literals"
+    "SELECT 'hello' AS s, 42 AS i32, 9000 AS i64, 7 AS u32, 18446744073709551615 AS u64, \
+     3.1415926535897931 AS f, NULL AS n"
+    rendered
+
+let test_prepared_render_collections () =
+  let stmt =
+    prepare "SELECT {{arr}} AS arr, {{tuple}} AS tuple, {{map}} AS map, {{nested}} AS nested"
+  in
+  let rendered =
+    Client.Prepared.render stmt
+      ~params:
+        [
+          ("arr", Column.Array [| Column.Int32 1l; Column.Int32 2l; Column.Int32 3l |]);
+          ("tuple", Column.Tuple [ Column.String "left"; Column.Int32 1l; Column.Float64 2.5 ]);
+          ( "map",
+            Column.Map
+              [ (Column.String "k1", Column.Int32 1l); (Column.String "k2", Column.Int32 2l) ] );
+          ( "nested",
+            Column.Array
+              [|
+                Column.Array [| Column.String "a"; Column.String "b" |];
+                Column.Array [| Column.String "c" |];
+              |] );
+        ]
+  in
+  Alcotest.(check string)
+    "render collections"
+    "SELECT [1, 2, 3] AS arr, ('left', 1, 2.5) AS tuple, map('k1', 1, 'k2', 2) AS map, [['a', \
+     'b'], ['c']] AS nested"
+    rendered
+
+let test_prepared_render_escaping () =
+  let stmt = prepare "SELECT {{text}} AS text" in
+  let rendered =
+    Client.Prepared.render stmt ~params:[ ("text", Column.String "O'Hara\npath\\dir") ]
+  in
+  Alcotest.(check string) "render escaping" "SELECT 'O''Hara\\npath\\\\dir' AS text" rendered
+
+let test_prepared_render_special_numbers () =
+  let stmt = prepare "SELECT {{nan}} AS nan_val, {{inf}} AS inf_val, {{ninf}} AS ninf_val" in
+  let rendered =
+    Client.Prepared.render stmt
+      ~params:
+        [
+          ("nan", Column.Float64 Float.nan);
+          ("inf", Column.Float64 Float.infinity);
+          ("ninf", Column.Float64 Float.neg_infinity);
+        ]
+  in
+  Alcotest.(check string)
+    "render special numbers" "SELECT nan AS nan_val, inf AS inf_val, -inf AS ninf_val" rendered
+
+let test_prepared_render_temporal () =
+  let stmt = prepare "SELECT {{dt}} AS dt, {{plain_dt}} AS plain_dt, {{dt64}} AS dt64" in
+  let rendered =
+    Client.Prepared.render stmt
+      ~params:
+        [
+          ("dt", Column.DateTime (1609459200L, Some "UTC"));
+          ("plain_dt", Column.DateTime (1609459200L, None));
+          ("dt64", Column.DateTime64 (1609459200000L, 3, Some "Asia/Singapore"));
+        ]
+  in
+  Alcotest.(check string)
+    "render temporal"
+    "SELECT toDateTime(1609459200, 'UTC') AS dt, toDateTime(1609459200) AS plain_dt, \
+     toDateTime64(1609459200000, 3, 'Asia/Singapore') AS dt64"
+    rendered
+
+let test_prepared_duplicate_placeholder_usage () =
+  let stmt = prepare "SELECT {{id}} AS first, {{id}} AS second" in
+  let rendered = Client.Prepared.render stmt ~params:[ ("id", Column.Int32 1l) ] in
+  Alcotest.(check string) "duplicate placeholder" "SELECT 1 AS first, 1 AS second" rendered
+
+let test_prepared_extra_params_ignored () =
+  let stmt = prepare "SELECT {{id}}" in
+  let rendered =
+    Client.Prepared.render stmt ~params:[ ("id", Column.Int32 1l); ("extra", Column.Int32 2l) ]
+  in
+  Alcotest.(check string) "extra params ignored" "SELECT 1" rendered
+
+let test_prepared_missing_param_execute () =
+  let client = Client.create () in
+  let stmt = Client.prepare client "SELECT {{id}}" in
+  expect_invalid_argument "execute missing param" "Client.execute_prepared: missing parameter 'id'"
+    (fun () -> ignore (Client.execute_prepared client stmt ~params:[]))
+
+let test_prepared_missing_param_stream () =
+  let client = Client.create () in
+  let stmt = Client.prepare client "SELECT {{id}}" in
+  expect_invalid_argument "stream missing param" "Client.execute_prepared: missing parameter 'id'"
+    (fun () ->
+      ignore
+        (Client.query_fold_prepared client stmt ~params:[] ~init:() ~f:(fun acc _ -> Lwt.return acc)))
+
+let test_prepared_empty_placeholder () =
+  expect_invalid_argument "empty placeholder" "Client.prepare: empty placeholder" (fun () ->
+      ignore (prepare "SELECT {{   }}"))
+
 (* Connection tests *)
 let test_connection_creation () =
   let conn = Connection.create ~host:"127.0.0.1" ~port:8463 () in
@@ -866,6 +1001,21 @@ let () =
         [
           Alcotest.test_case "Int32 roundtrip" `Quick test_int32_roundtrip;
           Alcotest.test_case "Int64 roundtrip" `Quick test_int64_roundtrip;
+        ] );
+      ( "Prepared",
+        [
+          Alcotest.test_case "placeholder extraction" `Quick test_prepared_placeholder_extraction;
+          Alcotest.test_case "render literals" `Quick test_prepared_render_literals;
+          Alcotest.test_case "render collections" `Quick test_prepared_render_collections;
+          Alcotest.test_case "render escaping" `Quick test_prepared_render_escaping;
+          Alcotest.test_case "render special numbers" `Quick test_prepared_render_special_numbers;
+          Alcotest.test_case "render temporal" `Quick test_prepared_render_temporal;
+          Alcotest.test_case "duplicate placeholder" `Quick
+            test_prepared_duplicate_placeholder_usage;
+          Alcotest.test_case "extra params ignored" `Quick test_prepared_extra_params_ignored;
+          Alcotest.test_case "execute missing param" `Quick test_prepared_missing_param_execute;
+          Alcotest.test_case "stream missing param" `Quick test_prepared_missing_param_stream;
+          Alcotest.test_case "empty placeholder" `Quick test_prepared_empty_placeholder;
         ] );
       ( "Connection",
         [
