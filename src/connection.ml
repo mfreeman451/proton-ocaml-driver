@@ -876,9 +876,24 @@ let receive_data_block t ~compressible read_fn : Block.t Lwt.t =
   (* Server sends table name string before block. Discard it. *)
   let* _table_name = read_str_lwt read_fn in
   if compressible && t.compression <> Compress.None then
-    let* decompressed = read_compressed_block_lwt read_fn in
-    let br = Buffered_reader.create_from_bytes_no_copy decompressed in
-    Lwt.return (Block.read_block_br ~revision br)
+    let buffer = Buffer.create 1024 in
+    let rec read_chunks () =
+      let* chunk = read_compressed_block_lwt read_fn in
+      (match Sys.getenv_opt "PROTON_DEBUG" with
+      | Some ("1" | "true" | "TRUE" | "yes" | "YES") ->
+          Printf.printf "[compress] decompressed chunk bytes=%d\n%!" (Bytes.length chunk)
+      | _ -> ());
+      Buffer.add_bytes buffer chunk;
+      let data = Buffer.to_bytes buffer in
+      try
+        let br = Buffered_reader.create_from_bytes_no_copy data in
+        let block = Block.read_block_br ~revision br in
+        Lwt.return block
+      with
+      | Failure msg when msg = "Unexpected end of stream" -> read_chunks ()
+      | End_of_file -> read_chunks ()
+    in
+    read_chunks ()
   else
     let* bytes = read_uncompressed_block_lwt read_fn in
     let br = Buffered_reader.create_from_bytes_no_copy bytes in
