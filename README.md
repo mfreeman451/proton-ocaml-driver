@@ -19,6 +19,7 @@ A high-performance, feature-rich OCaml driver for [Timeplus Proton](https://time
 ## Table of Contents
 
 - [Quick Start](#quick-start)
+- [Parameterized Queries](#parameterized-queries)
 - [Streaming Queries](#streaming-queries)
 - [Async Inserts](#async-inserts)
 - [Data Types](#data-types)
@@ -52,13 +53,64 @@ let client = Client.create ~host:"localhost" ~port:8463 ~database:"default" () i
 let%lwt result = Client.execute client "SELECT name, age FROM users LIMIT 10" in
 match result with
 | Client.NoRows -> Lwt_io.println "No results found"
-| Client.Rows (rows, columns) -> 
+| Client.Rows (rows, columns) ->
     List.iter (fun row ->
       let values = List.map Column.value_to_string row in
       Printf.printf "%s\n" (String.concat ", " values)
     ) rows;
     Lwt.return_unit
 ```
+
+## Parameterized Queries
+
+Avoid string interpolation by binding values through named placeholders. Placeholders use
+the syntax `{{name}}` and are supplied as `(string * Proton.Column.value)` pairs.
+
+### One-off execution
+
+```ocaml
+open Proton
+
+let client = Client.create () in
+
+let%lwt result =
+  Client.execute_with_params client
+    "SELECT * FROM events WHERE tenant = {{tenant}} AND ts >= {{start}}"
+    ~params:[
+      ("tenant", Column.String "acme");
+      ("start", Column.DateTime64 (1_700_000_000_000L, 3, Some "UTC"));
+    ]
+in
+match result with
+| Client.NoRows -> print_endline "no matches"
+| Client.Rows (rows, _) -> Printf.printf "fetched %d rows\n" (List.length rows)
+```
+
+### Reusable prepared statements
+
+```ocaml
+open Proton
+
+let client = Client.create () in
+let stmt = Client.prepare client
+  "SELECT count(*) FROM metrics WHERE name = {{metric}} AND ts >= {{window_start}}"
+in
+
+let run metric window_start =
+  Client.execute_prepared client stmt
+    ~params:[
+      ("metric", Column.String metric);
+      ("window_start", Column.DateTime64 (window_start, 3, Some "UTC"));
+    ]
+in
+
+let%lwt yesterday = run "cpu.usage" 1_699_913_600_000L in
+let%lwt today = run "cpu.usage" 1_699_999_200_000L in
+(* ... *)
+```
+
+All streaming helpers have `_with_params` and `_prepared` variants so you can bind values while
+folding or iterating over large result sets.
 
 ## Streaming Queries
 

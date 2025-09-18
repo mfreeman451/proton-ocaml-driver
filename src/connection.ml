@@ -875,7 +875,7 @@ let receive_data_block t ~compressible read_fn : Block.t Lwt.t =
   let revision = match t.srv with Some s -> s.revision | None -> 0 in
   (* Server sends table name string before block. Discard it. *)
   let* _table_name = read_str_lwt read_fn in
-  if compressible && t.compression <> Compress.None then (
+  if compressible && t.compression <> Compress.None then
     let buffer = Buffer.create 1024 in
     let rec read_chunks () =
       let* chunk = read_compressed_block_lwt read_fn in
@@ -893,7 +893,7 @@ let receive_data_block t ~compressible read_fn : Block.t Lwt.t =
       | Failure msg when msg = "Unexpected end of stream" -> read_chunks ()
       | End_of_file -> read_chunks ()
     in
-    read_chunks ())
+    read_chunks ()
   else
     let* bytes = read_uncompressed_block_lwt read_fn in
     let br = Buffered_reader.create_from_bytes_no_copy bytes in
