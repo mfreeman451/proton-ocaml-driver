@@ -20,14 +20,15 @@
   lz4
   zstd
   lwt
-  tls
-  tls-lwt
+  (tls (>= 2.0.2))
+  (tls-lwt (>= 2.0.2))
   ca-certs
   (x509 (>= 1.0.0))
   cstruct
   ptime
   domain-name
-  mirage-crypto
+  (mirage-crypto (>= 2.0.2))
+  (conf-gmp (and :build (>= 4)))
   ;; Avoid opam 2.0 Debian-12 global --with-test cycles
   (alcotest (and :with-test (or (<> os_distribution "debian") (<> os_version "12"))))
   (odoc :with-doc)))
