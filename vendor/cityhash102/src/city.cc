@@ -359,7 +359,11 @@ uint128 CityHash128(const char *s, size_t len) {
 
 }
 
-#ifdef __SSE4_2__
+#if defined(CITYHASH_FORCE_PORTABLE)
+#undef __SSE4_2__
+#endif
+
+#if defined(__SSE4_2__) && !defined(CITYHASH_FORCE_PORTABLE)
 #include <citycrc.h>
 #include <nmmintrin.h>
 

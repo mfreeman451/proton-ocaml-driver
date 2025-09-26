@@ -27,7 +27,7 @@
   cstruct
   ptime
   domain-name
-  (mirage-crypto (>= 2.0.2))
+  (mirage-crypto (and (>= 1.2.0) (< 3.0.0)))
   (conf-gmp (and :build (>= 4)))
   ;; Avoid opam 2.0 Debian-12 global --with-test cycles
   (alcotest (and :with-test (or (<> os_distribution "debian") (<> os_version "12"))))
