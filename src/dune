@@ -40,5 +40,5 @@
  (foreign_stubs
   (language cxx)
   (names cityhash_stubs cityhash102_cc)
-  (flags -std=c++11 -fPIC)
+  (flags -std=c++11 -fPIC -DCITYHASH_FORCE_PORTABLE)
   (include_dirs ../vendor/cityhash102/include ../vendor/cityhash102/src)))
